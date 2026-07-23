@@ -37,8 +37,9 @@ type Defaults struct {
 	OnNoMatch string `yaml:"on_no_match"`
 	// Verify is one of "required", "advisory", "off".
 	Verify string `yaml:"verify"`
-	// SidecarMaxAge is a Go duration string, e.g. "24h". Milestone 2
-	// (verify-in-slot) consumes this; milestone 1 only validates it parses.
+	// SidecarMaxAge is a Go duration string, e.g. "24h". Consumed by
+	// resolve/exec (internal/verify.ClassifyForResolve) to decide when a
+	// verified sidecar is too old to substitute for a live probe.
 	SidecarMaxAge string `yaml:"sidecar_max_age"`
 }
 
@@ -94,6 +95,11 @@ func (m RuleMatch) IsEmpty() bool {
 type RuleUse struct {
 	Identity string `yaml:"identity"`
 	Access   string `yaml:"access"` // read-only | read-write
+	// Verify overrides defaults.verify for this rule only: "required",
+	// "advisory", or "off" (milestone 2, spec 5.2/5.4). Empty inherits
+	// defaults.verify. The CLI --verify flag layered on top of whichever
+	// of these applies can only tighten further, never loosen (spec 4.1).
+	Verify string `yaml:"verify,omitempty"`
 }
 
 // VaultConfig is the vault{} block.

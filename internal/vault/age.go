@@ -172,6 +172,14 @@ func (b *AgeBackend) Fingerprint(ctx context.Context, h Handle) (string, error) 
 	return fp, nil
 }
 
+// FingerprintBytes is the exported form of the spec 5.3 fingerprint
+// formula (hex(sha256("credroute-fp-v1" || secret))[0:32]), for use by
+// verification code outside this package that already holds decrypted
+// secret bytes (internal/verify) and should not duplicate the formula.
+func FingerprintBytes(secret []byte) string {
+	return fingerprintBytes(secret)
+}
+
 // fingerprintBytes implements the fingerprint formula on raw bytes,
 // separated from Fingerprint so it can be unit tested without a live age
 // decrypt.

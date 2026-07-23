@@ -30,6 +30,8 @@ func run(args []string) int {
 		return cmdExplain(rest)
 	case "exec":
 		return cmdExec(rest)
+	case "verify":
+		return cmdVerify(rest)
 	case "config":
 		if len(rest) == 0 || rest[0] != "validate" {
 			fmt.Fprintln(os.Stderr, "credroute config: expected subcommand \"validate\"")
@@ -54,9 +56,10 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, `credroute - deterministic credential router for AI-agent CLI harnesses
 
 Usage:
-  credroute resolve --platform <name> [--dir <path>] [--task <tag>] [--json]
+  credroute resolve --platform <name> [--dir <path>] [--task <tag>] [--verify=required|advisory|off] [--json]
   credroute explain [--all] --platform <name> [--dir <path>] [--task <tag>] [--json]
   credroute exec [--platform <name>] [--dir <path>] [--task <tag>] -- <cmd> [args...]
+  credroute verify [--slot <path> | --platform <name> [--dir <path>] [--task <tag>]] [--after-login] [--json]
   credroute config validate [path]
   credroute doctor
   credroute version
@@ -64,5 +67,6 @@ Usage:
 Global flags: --config <path>  --json  --quiet  -v
 
 Exit codes: 0 ok, 1 usage error, 2 no rule matched (fail closed),
+3 identity verification mismatch or unverifiable under verify:required,
 4 vault backend error, 5 config invalid.`)
 }

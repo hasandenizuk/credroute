@@ -187,6 +187,10 @@ func Validate(cfg *Config) ValidationResult {
 			addErr(path+".use.access", "unknown access level %q (expected: read-only, read-write)", rule.Use.Access)
 		}
 
+		if rule.Use.Verify != "" && !validVerifyModes[rule.Use.Verify] {
+			addErr(path+".use.verify", "unknown value %q (expected: required, advisory, off)", rule.Use.Verify)
+		}
+
 		// Cross-check identity has a matching platform/access-level
 		// credential. Only possible when the rule names exactly one
 		// platform; a wildcard or multi-platform match can't be checked
