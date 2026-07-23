@@ -32,6 +32,11 @@ coverage.html
 go.work
 go.work.sum
 
+# Internal session/tracking artifacts that hooks may drop into the repo dir
+SESSION_LOG.md
+PROGRESS.md
+HANDOVER.md
+
 # Editor / OS
 .DS_Store
 *.swp
