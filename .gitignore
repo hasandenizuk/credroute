@@ -1,0 +1,39 @@
+# Secrets must never be committed. credroute routes to a vault; it does not store secrets in-repo.
+*.age
+*.env
+.env
+.env.*
+*.key
+*.pem
+credentials.json
+identity.json
+*.identity.json
+
+# credroute local state (user config and audit logs are machine-local)
+/config.yaml
+/config.yml
+credroute.yaml
+credroute.yml
+audit.log
+*.audit.log
+
+# Go build output
+/credroute
+/dist/
+/bin/
+*.exe
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace / deps
+/vendor/
+go.work
+go.work.sum
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
