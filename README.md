@@ -49,3 +49,17 @@ The core is a single standalone binary. Each AI harness gets a thin adapter that
 ## License
 
 [MIT](LICENSE). Copyright (c) 2026 Hasan Deniz.
+
+---
+
+## Who am I, what do I do?
+
+Prepared by [Hasan Deniz](https://hasandeniz.com)
+
+SEO / GEO / AI consultant, London. 20+ years in search.
+
+Technical SEO, site and CMS migrations, content architecture, schema and entities, GEO, AEO and agentic experience. Original testing on how AI systems read, quote and act on the web.
+
+Connect with me → [LinkedIn](https://www.linkedin.com/in/hasandeniz/)
+
+24 July 2026
