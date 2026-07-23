@@ -1,0 +1,112 @@
+# examples/config.yaml
+#
+# Worked example adapted from docs/technical-spec.md section 2.4: a solo
+# operator, two clients, sub-projects, Google read-only/read-write, and a
+# GitHub PAT. Passes `credroute config validate`.
+version: 1
+
+defaults:
+  on_no_match: refuse
+  verify: required
+  sidecar_max_age: 24h
+
+clients:
+  acme:
+    roots: ["~/Projects/client.acme/**"]
+  bluesky:
+    roots: ["~/Projects/client.bluesky/**"]
+
+identities:
+  alex@example.com:
+    label: "Alex personal"
+    platforms:
+      google:
+        credentials:
+          read-only:
+            type: oauth
+            vault: age://google/alex-example-com/oauth-ro.json.age
+            slot: ~/.config/gws/profiles/personal-view
+          read-write:
+            type: oauth
+            vault: age://google/alex-example-com/oauth-rw.json.age
+            slot: ~/.config/gws/profiles/personal-default
+      github:
+        credentials:
+          read-write:
+            type: pat
+            vault: age://github/alex-example-com/pat-repo.age
+
+  alex@acme-corp.com:
+    label: "Acme workspace identity"
+    platforms:
+      google:
+        credentials:
+          read-only:
+            type: oauth
+            vault: age://google/alex-acme-corp-com/oauth-ro.json.age
+            slot: ~/.config/gws/profiles/acme-view
+
+  reports@acme-corp.com:
+    label: "Acme service account for Search Console only"
+    platforms:
+      google:
+        credentials:
+          read-only:
+            type: oauth
+            vault: age://google/reports-acme-corp-com/gsc-ro.json.age
+            slot: ~/.config/gws/profiles/acme-gsc
+
+  bot@bluesky.io:
+    label: "Bluesky deploy bot"
+    platforms:
+      github:
+        credentials:
+          read-write:
+            type: pat
+            vault: age://github/bot-bluesky-io/pat-deploy.age
+
+rules:
+  # Ordered. First match wins. Narrow before broad.
+
+  # Acme: Search Console goes through the dedicated reporting account.
+  - id: acme-gsc
+    match: { client: acme, platform: google, task: gsc }
+    use: { identity: reports@acme-corp.com, access: read-only }
+
+  # Acme: all other Google access is the workspace identity, read-only.
+  - id: acme-google-ro
+    match: { client: acme, platform: google }
+    use: { identity: alex@acme-corp.com, access: read-only }
+
+  # Bluesky sub-project "webapp" may deploy: bot PAT, read-write.
+  - id: bluesky-deploy
+    match:
+      dir: "~/Projects/client.bluesky/project.webapp/**"
+      platform: github
+      task: deploy
+    use: { identity: bot@bluesky.io, access: read-write }
+
+  # Bluesky anywhere else on GitHub: Alex's own PAT.
+  - id: bluesky-github
+    match: { client: bluesky, platform: github }
+    use: { identity: alex@example.com, access: read-write }
+
+  # Personal projects (outside any client root): personal Google, read-write.
+  - id: personal-google
+    match: { dir: "~/Projects/personal/**", platform: google }
+    use: { identity: alex@example.com, access: read-write }
+
+  - id: personal-github
+    match: { dir: "~/Projects/personal/**", platform: github }
+    use: { identity: alex@example.com, access: read-write }
+
+vault:
+  backend: age
+  age:
+    store_dir: ~/Projects/shared/secrets
+    identity_file: ~/.config/credroute/age-identity.txt
+
+# Optional thin store (D1), commented out by default.
+# store:
+#   enabled: true
+#   dir: ~/.local/share/credroute/store
