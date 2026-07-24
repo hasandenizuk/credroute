@@ -1,0 +1,238 @@
+// allow-claude-code: see describe.go header.
+//
+// This is the drift-check: for every command in internal/describe's
+// manifest, it invokes the REAL cmdXxx function (the same one main.go
+// dispatches to) with "--help", captures the flag.FlagSet's own usage
+// text (stdlib's flag package prints it and returns flag.ErrHelp before
+// any of the command's actual logic runs, since every command calls
+// fs.Parse and returns immediately on error), and diffs the real flag
+// names against what the manifest declares. A command whose flags this
+// file's authors forget to update in internal/describe/manifest.go
+// fails here, instead of silently drifting from what an agent would
+// discover at runtime.
+//
+// This does not (and cannot, without a much larger refactor extracting
+// every command's flag registration into a shared constructor) verify
+// positional-argument names, "required"/"allowed values" metadata,
+// purpose text, examples, or exit codes: the stdlib flag package has no
+// representation for any of those. Only flag NAMES are mechanically
+// checked.
+package main
+
+import (
+	"bufio"
+	"flag"
+	"os"
+	"regexp"
+	"sort"
+	"testing"
+
+	"github.com/hasandenizuk/credroute/internal/describe"
+)
+
+// commandFuncs maps a describe.Command.Name to the real function main.go
+// dispatches to for it. Kept in this test file (not main.go) so adding a
+// command here is a one-line, review-visible reminder to also add it to
+// the manifest, and vice versa: TestDescribeManifest_CoversEveryDispatchedCommand
+// below checks this map and the manifest have exactly the same key set.
+var commandFuncs = map[string]func([]string) int{
+	"init":             cmdInit,
+	"resolve":          cmdResolve,
+	"explain":          cmdExplain,
+	"exec":             cmdExec,
+	"verify":           cmdVerify,
+	"config validate":  cmdConfigValidate,
+	"doctor":           cmdDoctor,
+	"profiles ls":      cmdProfilesLs,
+	"profiles show":    cmdProfilesShow,
+	"adapter install":  cmdAdapterInstall,
+	"audit":            cmdAudit,
+	"identity add":     cmdIdentityAdd,
+	"identity edit":    cmdIdentityEdit,
+	"route add":        cmdRouteAdd,
+	"route assign":     cmdRouteAssign,
+	"route ls":         cmdRouteLs,
+	"store add":        cmdStoreAdd,
+	"store ls":         cmdStoreLs,
+	"store remove":     cmdStoreRemove,
+	"describe":         cmdDescribe,
+	"handle get":       cmdHandleGet,
+	"hook claude-code": cmdHookClaudeCode,
+	// "version" is deliberately excluded: cmdVersion registers no
+	// flag.FlagSet at all (see version.go), so there is nothing for
+	// --help to print; it is still checked for manifest presence by
+	// TestDescribeManifest_CoversEveryDispatchedCommand via
+	// noFlagSetCommands below.
+}
+
+// noFlagSetCommands lists manifest commands that register no
+// flag.FlagSet (so the --help capture below does not apply to them) but
+// must still appear in the manifest.
+var noFlagSetCommands = map[string]bool{
+	"version": true,
+}
+
+var flagLineRE = regexp.MustCompile(`(?m)^  -(\S+)`)
+
+// captureHelpFlagNames runs cmd([]string{"--help"}) with os.Stderr
+// redirected to a pipe, and returns the set of flag names flag.PrintDefaults
+// wrote (stdlib's default usage format is "  -name ...\n\t...", one flag
+// per such line). cmd must return without side effects on --help, which
+// holds for every command here because reorderArgsForFlagParse leaves
+// "--help" as a token flag.Parse's internal help handling intercepts
+// before any command's own logic runs.
+func captureHelpFlagNames(t *testing.T, cmd func([]string) int) map[string]bool {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+	cmd([]string{"--help"})
+	os.Stderr = orig
+	_ = w.Close()
+
+	names := map[string]bool{}
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		if m := flagLineRE.FindStringSubmatch(scanner.Text()); m != nil {
+			names[m[1]] = true
+		}
+	}
+	return names
+}
+
+// manifestFlagNames returns the flag-kind Param names a manifest command
+// declares, plus the four global flag names if the command opts into
+// them (Command.Globals).
+func manifestFlagNames(cmd describe.Command) map[string]bool {
+	names := map[string]bool{}
+	for _, p := range cmd.Params {
+		if p.Kind == "flag" {
+			names[p.Name] = true
+		}
+	}
+	if cmd.Globals {
+		for _, p := range describe.GlobalParams() {
+			names[p.Name] = true
+		}
+	}
+	return names
+}
+
+func TestDescribeManifest_FlagsMatchRealFlagSets(t *testing.T) {
+	for _, cmd := range describe.Manifest() {
+		cmd := cmd
+		if noFlagSetCommands[cmd.Name] {
+			continue
+		}
+		t.Run(cmd.Name, func(t *testing.T) {
+			fn, ok := commandFuncs[cmd.Name]
+			if !ok {
+				t.Fatalf("manifest command %q has no entry in commandFuncs; add one so this test can verify it", cmd.Name)
+			}
+			real := captureHelpFlagNames(t, fn)
+			want := manifestFlagNames(cmd)
+
+			for name := range want {
+				if !real[name] {
+					t.Errorf("manifest declares --%s but the real command has no such flag", name)
+				}
+			}
+			for name := range real {
+				if !want[name] {
+					t.Errorf("real command has flag --%s but the manifest does not declare it", name)
+				}
+			}
+		})
+	}
+}
+
+// TestDescribeManifest_CoversEveryDispatchedCommand checks that
+// commandFuncs (the real dispatch table this test drives) and the
+// manifest name exactly the same set of commands, so a command added to
+// main.go's run() without a matching manifest entry (or vice versa) is
+// caught here rather than shipping undocumented or documented-but-fake.
+func TestDescribeManifest_CoversEveryDispatchedCommand(t *testing.T) {
+	manifestNames := map[string]bool{}
+	for _, cmd := range describe.Manifest() {
+		manifestNames[cmd.Name] = true
+	}
+
+	dispatched := map[string]bool{}
+	for name := range commandFuncs {
+		dispatched[name] = true
+	}
+	for name := range noFlagSetCommands {
+		dispatched[name] = true
+	}
+
+	var onlyInManifest, onlyInDispatch []string
+	for name := range manifestNames {
+		if !dispatched[name] {
+			onlyInManifest = append(onlyInManifest, name)
+		}
+	}
+	for name := range dispatched {
+		if !manifestNames[name] {
+			onlyInDispatch = append(onlyInDispatch, name)
+		}
+	}
+	sort.Strings(onlyInManifest)
+	sort.Strings(onlyInDispatch)
+
+	if len(onlyInManifest) > 0 {
+		t.Errorf("manifest has commands not covered by this test's dispatch table: %v", onlyInManifest)
+	}
+	if len(onlyInDispatch) > 0 {
+		t.Errorf("this test's dispatch table has commands missing from the manifest: %v", onlyInDispatch)
+	}
+}
+
+func TestCmdDescribe_JSONAndFilter(t *testing.T) {
+	if code := cmdDescribe([]string{"--json"}); code != 0 {
+		t.Fatalf("describe --json exit = %d, want 0", code)
+	}
+	if code := cmdDescribe([]string{"--json", "route add"}); code != 0 {
+		t.Fatalf("describe --json 'route add' exit = %d, want 0", code)
+	}
+	if code := cmdDescribe([]string{"--json", "not-a-real-command"}); code != 1 {
+		t.Errorf("describe of an unknown command exit = %d, want 1", code)
+	}
+}
+
+func TestCmdDescribe_LookupIsCaseSensitiveExactMatch(t *testing.T) {
+	if _, ok := describe.Lookup("route"); ok {
+		t.Error("Lookup(\"route\") should not match \"route add\"/\"route ls\"/etc, want false")
+	}
+	if _, ok := describe.Lookup("route add"); !ok {
+		t.Error("Lookup(\"route add\") should match, want true")
+	}
+}
+
+func TestGlobalParams_NamesAreStable(t *testing.T) {
+	got := map[string]bool{}
+	for _, p := range describe.GlobalParams() {
+		got[p.Name] = true
+	}
+	for _, want := range []string{"config", "json", "quiet", "v"} {
+		if !got[want] {
+			t.Errorf("GlobalParams missing %q", want)
+		}
+	}
+}
+
+// TestReorderArgsForFlagParse_HelpPassesThrough guards the assumption
+// captureHelpFlagNames relies on: "--help" must survive
+// reorderArgsForFlagParse unchanged (it is not a registered flag on any
+// FlagSet here, so it must not be treated as a valued flag that eats the
+// next token).
+func TestReorderArgsForFlagParse_HelpPassesThrough(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("platform", "", "")
+	got := reorderArgsForFlagParse(fs, []string{"--help"})
+	if len(got) != 1 || got[0] != "--help" {
+		t.Errorf("reorderArgsForFlagParse([--help]) = %v, want [--help]", got)
+	}
+}

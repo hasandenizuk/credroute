@@ -338,6 +338,74 @@ func TestDocument_Save_RefusesUntilCalled(t *testing.T) {
 	}
 }
 
+// TestDocument_AddIdentity_FreshInitStaysBlockStyle regression-tests the
+// "identities: {}" / "rules: []" flow-style trap: a config written by
+// `credroute init` (nil Identities/Rules, no omitempty on those two
+// top-level fields) round-trips those keys as flow-style empty
+// containers ("{}" / "[]" are the only way to write an empty
+// mapping/sequence). Adding the first identity or rule into one of those
+// must not leave the whole subtree flow-styled (YAML requires every
+// descendant of a flow node to also be flow), or every later edit would
+// render as a cramped, unreadable single line instead of the block style
+// every documented example config uses.
+func TestDocument_AddIdentity_FreshInitStaysBlockStyle(t *testing.T) {
+	freshInit := `version: 1
+defaults:
+    on_no_match: refuse
+    verify: required
+    sidecar_max_age: 24h
+clients: {}
+identities: {}
+rules: []
+vault:
+    backend: age
+    age:
+        store_dir: /tmp/vault
+        identity_file: /tmp/id.txt
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(freshInit), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := OpenDocument(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := doc.AddIdentity("alex@example.com", "Alex personal"); err != nil {
+		t.Fatalf("AddIdentity: %v", err)
+	}
+	if err := doc.UpsertCredential("alex@example.com", "github", "read-write", Credential{Type: "pat", Vault: "age://github/alex/pat.age"}); err != nil {
+		t.Fatalf("UpsertCredential: %v", err)
+	}
+	rule := Rule{ID: "gh-rule", Match: RuleMatch{Platform: StringOrList{"github"}}, Use: RuleUse{Identity: "alex@example.com", Access: "read-write"}}
+	if err := doc.AddRule(rule, -1); err != nil {
+		t.Fatalf("AddRule: %v", err)
+	}
+	if err := doc.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(b)
+	if strings.Contains(out, "{alex@example.com") || strings.Contains(out, "identities: {a") {
+		t.Errorf("identities rendered in flow style, want block:\n%s", out)
+	}
+	if strings.Contains(out, "rules: [{") {
+		t.Errorf("rules rendered in flow style, want block:\n%s", out)
+	}
+	if !strings.Contains(out, "identities:\n    alex@example.com:\n") {
+		t.Errorf("identities not in expected block layout:\n%s", out)
+	}
+	if !strings.Contains(out, "rules:\n    - id: gh-rule\n") {
+		t.Errorf("rules not in expected block layout:\n%s", out)
+	}
+}
+
 func ruleIDs(cfg *Config) []string {
 	ids := make([]string, len(cfg.Rules))
 	for i, r := range cfg.Rules {

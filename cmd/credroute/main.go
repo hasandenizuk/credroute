@@ -48,6 +48,14 @@ func run(args []string) int {
 		return cmdAdapter(rest)
 	case "audit":
 		return cmdAudit(rest)
+	case "identity":
+		return cmdIdentity(rest)
+	case "route":
+		return cmdRoute(rest)
+	case "store":
+		return cmdStore(rest)
+	case "describe":
+		return cmdDescribe(rest)
 	case "handle":
 		if len(rest) == 0 || rest[0] != "get" {
 			fmt.Fprintln(os.Stderr, "credroute handle: expected subcommand \"get\"")
@@ -83,6 +91,15 @@ Usage:
   credroute profiles show <platform> [--task <tag>] [--json]
   credroute adapter install <claude-code|codex|agy> [--dir <path>] [--dry-run] [--force]
   credroute audit [--since <dur>] [--platform <name>] [--identity <id>] [--client <name>] [--failures] [--json]
+  credroute identity add <id> [--label <text>]
+  credroute identity edit <id> [--label <text>] [--add-credential platform:access:type:vault-handle[#slot] ...]
+  credroute route add <rule-id> [--client <name> | --dir <glob>] [--platform <p> ...] [--task <t> ...] --identity <id> --access <level> [--verify <mode>] [--index <n>]
+  credroute route assign <rule-id> [--identity <id>] [--access <level>] [--verify <mode>]
+  credroute route ls [--json]
+  credroute store add <path> [--from-file <path> | --from-fd <n>] [--force]
+  credroute store ls [--json]
+  credroute store remove <path> [--force]
+  credroute describe [--json] [<command>]
   credroute handle get <vault-handle> [--to-file <path> | --to-fd <n> | --force-reveal]
   credroute hook claude-code   (reads PreToolUse JSON on stdin, F6)
   credroute version

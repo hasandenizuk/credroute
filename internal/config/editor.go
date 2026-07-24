@@ -120,8 +120,24 @@ func findMapEntry(m *yaml.Node, key string) *yaml.Node {
 // ensureMapEntry returns the value node for key in m, appending a fresh
 // key + empty-container(kind) pair at the end of m's content if key is
 // not already present.
+//
+// A container that already exists but is still empty (e.g. Config's
+// non-omitempty top-level "identities: {}" / "rules: []", written by
+// yaml.Marshal for a nil map/slice) is parsed with Style set to
+// FlowStyle, since "{}"/"[]" is only representable in flow syntax. YAML
+// requires every descendant of a flow node to also be flow (block
+// syntax needs newlines/indentation that do not parse inside "{ }"), so
+// leaving that Style in place would force every value this package adds
+// underneath it into cramped single-line flow style. An empty
+// placeholder like that is never a deliberate user formatting choice
+// (there is nothing in it to have a style yet), so it is safe to reset
+// to block here; a pre-existing NON-empty container is left exactly as
+// the user wrote it.
 func ensureMapEntry(m *yaml.Node, key string, kind yaml.Kind) *yaml.Node {
 	if v := findMapEntry(m, key); v != nil {
+		if v.Style == yaml.FlowStyle && len(v.Content) == 0 {
+			v.Style = 0
+		}
 		return v
 	}
 	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}
