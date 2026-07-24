@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Windows is deliberately not built: internal/config/editor.go takes
+      # an exclusive lock via syscall.Flock, which does not exist on
+      # windows/amd64. Cross-platform locking would need its own package;
+      # tracked as follow-up, not bodged here.
+      - name: Build release binaries
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          commit="$(git rev-parse --short HEAD)"
+          mkdir -p dist
+
+          targets="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64"
+          for target in $targets; do
+            goos="${target%/*}"
+            goarch="${target#*/}"
+            name="credroute_${version}_${goos}_${goarch}"
+            workdir="dist/${name}"
+            mkdir -p "$workdir"
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath \
+              -ldflags "-s -w -X main.buildVersion=${version} -X main.buildCommit=${commit}" \
+              -o "${workdir}/credroute" ./cmd/credroute
+            cp README.md LICENSE CHANGELOG.md "$workdir/"
+            tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+          done
+
+          (cd dist && sha256sum credroute_*.tar.gz > checksums.txt)
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          notes="Binaries for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64. Verify with checksums.txt (sha256). Windows is not built yet (see release.yml for why)."
+          gh release create "$tag" \
+            --title "$tag" \
+            --notes "$notes" \
+            dist/credroute_*.tar.gz \
+            dist/checksums.txt
