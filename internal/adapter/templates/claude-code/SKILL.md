@@ -31,3 +31,5 @@ value credroute hands you.
 Before acting on a credentialed command, announce the identity so the
 operator can see which account is about to be used, in the form:
 `<identity> (<platform>, <access level>) via rule <rule id>`.
+
+{{COMMAND_REFERENCE}}

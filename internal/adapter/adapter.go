@@ -9,6 +9,18 @@
 // never logic (spec 8.1): every file this package writes only ever calls
 // out to `credroute resolve`/`credroute exec`; no routing, verification,
 // or secret handling lives here.
+//
+// The SKILL.md/AGENTS.md/GEMINI.md templates each carry a
+// "{{COMMAND_REFERENCE}}" marker (agent-native command layer milestone,
+// roadmap.md section 4): readTemplate substitutes it with a summary
+// generated from internal/describe.Manifest(), the exact same data
+// `credroute describe` serves, so the command list an adapter teaches an
+// agent cannot list a command (or drop one) that does not actually
+// exist in the binary. The hand-written protocol prose around that
+// marker (when to call resolve/exec, how to read exit codes, the
+// announce-line format) stays hand-maintained: it is instructional text,
+// not a command listing, and has no runtime source of truth to generate
+// from.
 package adapter
 
 import (
@@ -16,9 +28,43 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/hasandenizuk/credroute/internal/config"
+	"github.com/hasandenizuk/credroute/internal/describe"
 )
+
+// commandReferenceMarker is substituted in template content with
+// commandReferenceBlock's output.
+const commandReferenceMarker = "{{COMMAND_REFERENCE}}"
+
+// commandReferenceBlock renders a one-line-per-command summary from
+// describe.Manifest(): the same manifest `credroute describe` serves, so
+// this list and describe's own output can never disagree about which
+// commands exist. Exact parameters are deliberately NOT expanded here
+// (that would just duplicate `describe`'s own JSON in prose that could
+// itself go stale); the block instead points the agent at `credroute
+// describe` for the full, live detail.
+func commandReferenceBlock() string {
+	var b strings.Builder
+	b.WriteString("## Full command reference\n\n")
+	b.WriteString("Run `credroute describe --json [<command>]` for exact parameters, allowed values, and examples. Every command credroute supports:\n\n")
+	for _, cmd := range describe.Manifest() {
+		b.WriteString("- `credroute " + cmd.Name + "` - " + firstSentence(cmd.Purpose) + "\n")
+	}
+	return b.String()
+}
+
+// firstSentence returns s up to and including its first ". ", or all of
+// s if there is no such split point, so the reference block stays one
+// line per command even when a manifest Purpose runs to several
+// sentences.
+func firstSentence(s string) string {
+	if i := strings.Index(s, ". "); i >= 0 {
+		return s[:i+1]
+	}
+	return s
+}
 
 //go:embed templates
 var templatesFS embed.FS
@@ -219,5 +265,9 @@ func readTemplate(name string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("adapter: read embedded template %s: %w", name, err)
 	}
-	return string(b), nil
+	content := string(b)
+	if strings.Contains(content, commandReferenceMarker) {
+		content = strings.ReplaceAll(content, commandReferenceMarker, commandReferenceBlock())
+	}
+	return content, nil
 }

@@ -21,3 +21,5 @@ tools (`gws`, `gh`) through `credroute exec` automatically when `shims/`
 is earlier in PATH than the real binaries; prefer them over calling the
 platform binary by an unshimmed path. credroute never prints a secret to
 stdout by itself; do not repeat back or log any value it hands you.
+
+{{COMMAND_REFERENCE}}
