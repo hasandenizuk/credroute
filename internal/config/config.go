@@ -23,6 +23,12 @@ type Config struct {
 	Rules      []Rule              `yaml:"rules"`
 	Vault      VaultConfig         `yaml:"vault"`
 	Store      *StoreConfig        `yaml:"store,omitempty"`
+	// Include lists additional config files to merge into this one
+	// (F11). Paths are relative to this file's own directory unless
+	// absolute or "~"-prefixed. Processed by Load; see mergeInclude for
+	// the merge policy. Nested includes (an included file that itself
+	// sets include:) are not supported and are a load error.
+	Include []string `yaml:"include,omitempty"`
 
 	// Path is the absolute path the config was loaded from. Not part of
 	// the YAML document; set by Load for error messages and doctor checks.
@@ -173,19 +179,66 @@ func DefaultPath() (string, error) {
 	return filepath.Join(home, ".config", "credroute", "config.yaml"), nil
 }
 
-// Load reads and strictly parses the config at path. An empty path uses
-// DefaultPath(). Unknown YAML fields are a hard error (KnownFields).
-// Load does not run semantic validation (see Validate); it only parses.
+// resolvedPath applies the F10 precedence (--config flag > CREDROUTE_CONFIG
+// env > default) for an explicit path argument that may be empty.
+func resolvedPath(path string) (string, error) {
+	if path != "" {
+		return path, nil
+	}
+	if env := os.Getenv("CREDROUTE_CONFIG"); env != "" {
+		return env, nil
+	}
+	return DefaultPath()
+}
+
+// Load reads and strictly parses the config at path (see resolvedPath for
+// how an empty path is resolved), merging any include: files it names
+// (F11). Unknown YAML fields are a hard error (KnownFields). Load does not
+// run semantic validation (see Validate); it only parses.
 func Load(path string) (*Config, error) {
-	resolved := path
-	if resolved == "" {
-		p, err := DefaultPath()
+	resolved, err := resolvedPath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg, err := loadOne(resolved)
+	if err != nil {
+		return nil, err
+	}
+	if len(cfg.Include) == 0 {
+		return cfg, nil
+	}
+
+	baseDir := filepath.Dir(cfg.Path)
+	seen := map[string]bool{cfg.Path: true}
+	for _, inc := range cfg.Include {
+		incPath, err := resolveIncludePath(baseDir, inc)
 		if err != nil {
+			return nil, fmt.Errorf("config %s: include %q: %w", cfg.Path, inc, err)
+		}
+		if seen[incPath] {
+			return nil, fmt.Errorf("config %s: include %q resolves to %s, which is already included (circular or duplicate include)", cfg.Path, inc, incPath)
+		}
+		seen[incPath] = true
+
+		incCfg, err := loadOne(incPath)
+		if err != nil {
+			return nil, fmt.Errorf("config %s: include %q: %w", cfg.Path, inc, err)
+		}
+		if len(incCfg.Include) > 0 {
+			return nil, fmt.Errorf("config %s: include %q (%s): nested include: is not supported", cfg.Path, inc, incPath)
+		}
+		if err := mergeInclude(cfg, incCfg, incPath); err != nil {
 			return nil, err
 		}
-		resolved = p
 	}
-	expanded, err := ExpandHome(resolved)
+	return cfg, nil
+}
+
+// loadOne parses exactly one config file at an already-resolved absolute
+// (or relative-to-cwd) path, without following its include: list.
+func loadOne(path string) (*Config, error) {
+	expanded, err := ExpandHome(path)
 	if err != nil {
 		return nil, err
 	}
@@ -205,6 +258,51 @@ func Load(path string) (*Config, error) {
 	}
 	cfg.Path = expanded
 	return &cfg, nil
+}
+
+// resolveIncludePath resolves one include: entry relative to baseDir
+// (the including file's own directory), honoring "~" and absolute paths.
+func resolveIncludePath(baseDir, inc string) (string, error) {
+	expanded, err := ExpandHome(inc)
+	if err != nil {
+		return "", err
+	}
+	if filepath.IsAbs(expanded) {
+		return expanded, nil
+	}
+	return filepath.Join(baseDir, expanded), nil
+}
+
+// mergeInclude folds src (a loaded include: file) into dst (the config
+// that named it). Policy, deliberately simple and fail-closed rather than
+// silently shadowing: clients/identities are unioned by key, and a key
+// defined in both dst and src is a hard error rather than a silent
+// overwrite in either direction. Rules from src are appended after dst's
+// own rules, so the including file's rules always take precedence under
+// first-match-wins, and an include only ever adds fallback/extra rules.
+// defaults/vault/store are never merged: they belong to the top-level
+// file only.
+func mergeInclude(dst, src *Config, srcPath string) error {
+	for name, c := range src.Clients {
+		if _, exists := dst.Clients[name]; exists {
+			return fmt.Errorf("include %s: client %q is already defined in %s", srcPath, name, dst.Path)
+		}
+		if dst.Clients == nil {
+			dst.Clients = map[string]Client{}
+		}
+		dst.Clients[name] = c
+	}
+	for id, identity := range src.Identities {
+		if _, exists := dst.Identities[id]; exists {
+			return fmt.Errorf("include %s: identity %q is already defined in %s", srcPath, id, dst.Path)
+		}
+		if dst.Identities == nil {
+			dst.Identities = map[string]Identity{}
+		}
+		dst.Identities[id] = identity
+	}
+	dst.Rules = append(dst.Rules, src.Rules...)
+	return nil
 }
 
 // ExpandHome expands a leading "~" or "~/" in p to the current user's home

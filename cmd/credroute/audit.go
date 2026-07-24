@@ -21,8 +21,9 @@ func cmdAudit(args []string) int {
 	since := fs.String("since", "", "only show entries within this duration of now, e.g. 24h")
 	platform := fs.String("platform", "", "filter by platform")
 	identity := fs.String("identity", "", "filter by identity")
+	client := fs.String("client", "", "filter by client (F17)")
 	failures := fs.Bool("failures", false, "only show refused / non-zero-exit entries")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
 		return 1
 	}
 
@@ -32,7 +33,7 @@ func cmdAudit(args []string) int {
 		return 1
 	}
 
-	filter := audit.Filter{Platform: *platform, Identity: *identity, FailuresOnly: *failures}
+	filter := audit.Filter{Platform: *platform, Identity: *identity, Client: *client, FailuresOnly: *failures}
 	if *since != "" {
 		d, parseErr := time.ParseDuration(*since)
 		if parseErr != nil {
@@ -57,8 +58,8 @@ func cmdAudit(args []string) int {
 		return 0
 	}
 	for _, e := range filtered {
-		fmt.Printf("%s  %-8s %-7s platform=%-8s identity=%-28s access=%-11s verify=%-11s exit=%d rule=%s\n",
-			e.TS.Format(time.RFC3339), e.Op, e.Decision, e.Platform, e.Identity, e.Access, e.Verification, e.Exit, e.Rule)
+		fmt.Printf("%s  %-8s %-7s platform=%-8s client=%-10s identity=%-28s access=%-11s verify=%-11s exit=%d rule=%s\n",
+			e.TS.Format(time.RFC3339), e.Op, e.Decision, e.Platform, e.Client, e.Identity, e.Access, e.Verification, e.Exit, e.Rule)
 	}
 	return 0
 }

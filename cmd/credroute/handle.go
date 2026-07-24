@@ -1,7 +1,4 @@
-// allow-claude-code: subagent dispatched directly by orchestrator with a
-// fully-specified technical spec (docs/technical-spec.md section 4.4) for
-// this exact multi-file build; mechanical translation of spec to Go, low
-// ambiguity.
+// allow-claude-code: see handle.go header.
 //
 // `credroute handle get` is the plumbing secret retrieval path (spec
 // 4.4.2): for adapters that must place a secret themselves, rather than
@@ -29,7 +26,7 @@ func cmdHandleGet(args []string) int {
 	toFile := fs.String("to-file", "", "write the secret to this path (0600 perms), instead of stdout")
 	toFD := fs.Int("to-fd", 0, "write the secret to this open file descriptor, instead of stdout")
 	forceReveal := fs.Bool("force-reveal", false, "allow printing the secret to stdout; refused without this even so (see below)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
@@ -43,6 +40,20 @@ func cmdHandleGet(args []string) int {
 		fmt.Fprintln(os.Stderr, "credroute handle get:", err)
 		return 5
 	}
+
+	// F1: mirror resolve/exec's verification gate whenever this handle
+	// can be matched back to a configured identity. A handle with no
+	// match in config is not modeled here at all (e.g. ad hoc/debug use)
+	// and is passed through unverified, same as before this fix.
+	if id, platform, _, cred, findErr := findCredentialByVaultHandle(cfg, handleStr); findErr == nil {
+		slot := expandSlot(cred.Slot)
+		pre := runVerifyPrecheck("", "", cfg.Defaults.Verify, cfg.Defaults.SidecarMaxAge, slot, cred.Vault)
+		if pre.Refuse() {
+			fmt.Fprintf(os.Stderr, "credroute handle get: refused: verification status %q under verify=%s for identity %q on platform %q (run `credroute verify --platform %s` to re-attest)\n", pre.Status, pre.Mode, id, platform, platform)
+			return 3
+		}
+	}
+
 	backend, err := buildVaultBackend(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "credroute handle get:", err)

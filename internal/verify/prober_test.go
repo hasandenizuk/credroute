@@ -28,33 +28,105 @@ func TestFingerprintProber_NeverNamesIdentity(t *testing.T) {
 	}
 }
 
-// TestGoogleOAuthProber_LiveNetwork_NeverCalled documents (and enforces via
-// go vet's unused-import-free build) that the CLI never registers a
-// GoogleOAuthProber unless the operator explicitly opts in via
-// NewRegistry(true). Every other test in this file points Endpoint at a
-// local httptest server, so no test here ever reaches a real network
-// endpoint.
-func TestRegistry_DefaultHasNoLiveGoogleProber(t *testing.T) {
+// TestRegistry_DisabledHasNoLiveProbers documents (and enforces via
+// go vet's unused-import-free build) that a registry built with
+// enableLiveProbes=false never touches the real network. Every other test
+// in this file that wants a live-shaped prober points Endpoint at a local
+// httptest server instead of relying on this registry.
+func TestRegistry_DisabledHasNoLiveProbers(t *testing.T) {
 	reg := NewRegistry(false)
-	p := reg.Best("google")
-	if _, ok := p.(*GoogleOAuthProber); ok {
-		t.Fatal("NewRegistry(false) registered a live GoogleOAuthProber; the gate is broken")
+	if p := reg.Best("google"); p.Method() != "fingerprint" {
+		if _, ok := p.(*GoogleOAuthProber); ok {
+			t.Fatal("NewRegistry(false) registered a live GoogleOAuthProber; the gate is broken")
+		}
 	}
-	if p.Method() != "fingerprint" {
-		t.Fatalf("default google prober method = %q, want fingerprint fallback", p.Method())
+	if p := reg.Best("github"); p.Method() != "fingerprint" {
+		if _, ok := p.(*GitHubPATProber); ok {
+			t.Fatal("NewRegistry(false) registered a live GitHubPATProber; the gate is broken")
+		}
 	}
 }
 
-func TestRegistry_LiveEnabledUsesGoogleProber(t *testing.T) {
+func TestRegistry_LiveEnabledUsesRealProbers(t *testing.T) {
 	reg := NewRegistry(true)
-	p := reg.Best("google")
-	if _, ok := p.(*GoogleOAuthProber); !ok {
+	if p := reg.Best("google"); func() bool { _, ok := p.(*GoogleOAuthProber); return !ok }() {
 		t.Fatalf("NewRegistry(true) did not register a GoogleOAuthProber for google, got %T", p)
 	}
+	if p := reg.Best("github"); func() bool { _, ok := p.(*GitHubPATProber); return !ok }() {
+		t.Fatalf("NewRegistry(true) did not register a GitHubPATProber for github, got %T", p)
+	}
 	// A platform with no dedicated prober still falls back.
-	other := reg.Best("github")
+	other := reg.Best("stripe")
 	if other.Method() != "fingerprint" {
-		t.Fatalf("github (no dedicated prober) method = %q, want fingerprint fallback", other.Method())
+		t.Fatalf("stripe (no dedicated prober) method = %q, want fingerprint fallback", other.Method())
+	}
+}
+
+// TestLiveProbesEnabled_NoNetworkSwitch is F2/F5's test-safety mechanism:
+// CREDROUTE_NO_NETWORK=1 must disable live probes; unset (the real-usage
+// default) must enable them. Every other test in this package that
+// exercises Run/cmdVerify-shaped flows sets CREDROUTE_NO_NETWORK=1 so
+// `go test` never reaches a real endpoint.
+func TestLiveProbesEnabled_NoNetworkSwitch(t *testing.T) {
+	t.Setenv("CREDROUTE_NO_NETWORK", "1")
+	if LiveProbesEnabled() {
+		t.Fatal("LiveProbesEnabled() = true with CREDROUTE_NO_NETWORK=1, want false")
+	}
+	t.Setenv("CREDROUTE_NO_NETWORK", "")
+	if !LiveProbesEnabled() {
+		t.Fatal("LiveProbesEnabled() = false with CREDROUTE_NO_NETWORK unset, want true (default on)")
+	}
+}
+
+func TestGitHubPATProber_Probe_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer ghp_test_token" {
+			t.Errorf("Authorization header = %q, want Bearer ghp_test_token", got)
+		}
+		w.Header().Set("X-OAuth-Scopes", "repo, read:org")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"login": "alex"})
+	}))
+	defer srv.Close()
+
+	prober := &GitHubPATProber{Endpoint: srv.URL, HTTPClient: srv.Client()}
+	secret := vault.NewSecret([]byte("ghp_test_token\n"))
+	defer secret.Zero()
+
+	identity, scopes, err := prober.Probe(context.Background(), secret, "github")
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if identity != "alex" {
+		t.Fatalf("identity = %q, want alex", identity)
+	}
+	if len(scopes) != 2 || scopes[0] != "repo" || scopes[1] != "read:org" {
+		t.Fatalf("scopes = %v, want [repo read:org]", scopes)
+	}
+}
+
+func TestGitHubPATProber_Probe_WrongPlatform(t *testing.T) {
+	prober := &GitHubPATProber{Endpoint: "http://127.0.0.1:0"}
+	secret := vault.NewSecret([]byte("ghp_test_token"))
+	defer secret.Zero()
+
+	if _, _, err := prober.Probe(context.Background(), secret, "google"); err == nil {
+		t.Fatal("expected an error for a non-github platform")
+	}
+}
+
+func TestGitHubPATProber_Probe_UpstreamError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	prober := &GitHubPATProber{Endpoint: srv.URL, HTTPClient: srv.Client()}
+	secret := vault.NewSecret([]byte("bad-token"))
+	defer secret.Zero()
+
+	if _, _, err := prober.Probe(context.Background(), secret, "github"); err == nil {
+		t.Fatal("expected an error on a non-200 /user response")
 	}
 }
 

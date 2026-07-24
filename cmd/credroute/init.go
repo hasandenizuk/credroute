@@ -33,7 +33,7 @@ func cmdInit(args []string) int {
 	identityFile := fs.String("identity-file", "", "vault.age.identity_file (default: "+defaultIdentityFile+")")
 	identityID := fs.String("identity", "", "optional: scaffold one identity, keyed by this id (usually an email)")
 	identityLabel := fs.String("identity-label", "", "label for --identity")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
 		return 1
 	}
 

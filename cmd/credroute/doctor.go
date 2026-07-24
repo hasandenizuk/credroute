@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,7 +27,7 @@ func cmdDoctor(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	g := &globalFlags{}
 	addGlobalFlags(fs, g)
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
 		return 1
 	}
 
@@ -85,6 +86,7 @@ func cmdDoctor(args []string) int {
 	}
 
 	addSidecarCheck(add, cfg)
+	addSyncConflictCheck(add, cfg)
 
 	for _, c := range checks {
 		mark := "OK  "
@@ -150,4 +152,65 @@ func addSidecarCheck(add func(name string, ok bool, detail string), cfg *config.
 		return
 	}
 	add("attestation sidecars", false, fmt.Sprintf("%d/%d flagged: %s", len(flagged), len(paths), strings.Join(flagged, "; ")))
+}
+
+// addSyncConflictCheck is F9 (spec 9.5): a file-sync tool (Syncthing,
+// Dropbox, and similar) leaves a "*sync-conflict*" or "*conflicted
+// copy*" sibling next to a file it could not merge automatically. A
+// config or state directory silently holding one of these means credroute
+// may be reading a stale or forked file without any other symptom, so
+// doctor scans both the config file's directory and the state directory
+// for filenames containing either marker and warns (does not refuse:
+// doctor is diagnostic only).
+func addSyncConflictCheck(add func(name string, ok bool, detail string), cfg *config.Config) {
+	var dirs []string
+	if cfg != nil && cfg.Path != "" {
+		dirs = append(dirs, filepath.Dir(cfg.Path))
+	}
+	if stateDir, err := attest.StateDir(); err == nil {
+		dirs = append(dirs, stateDir)
+	}
+
+	var flagged []string
+	seenDir := map[string]bool{}
+	for _, dir := range dirs {
+		if dir == "" || seenDir[dir] {
+			continue
+		}
+		seenDir[dir] = true
+		found, err := scanForSyncConflicts(dir)
+		if err != nil {
+			continue
+		}
+		flagged = append(flagged, found...)
+	}
+
+	if len(flagged) == 0 {
+		add("sync-conflict files", true, "none found")
+		return
+	}
+	sort.Strings(flagged)
+	add("sync-conflict files", false, fmt.Sprintf("%d found: %s", len(flagged), strings.Join(flagged, "; ")))
+}
+
+// syncConflictMarkers are matched case-insensitively against each
+// directory entry's filename.
+var syncConflictMarkers = []string{"sync-conflict", "conflicted copy"}
+
+func scanForSyncConflicts(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		lower := strings.ToLower(e.Name())
+		for _, marker := range syncConflictMarkers {
+			if strings.Contains(lower, marker) {
+				out = append(out, filepath.Join(dir, e.Name()))
+				break
+			}
+		}
+	}
+	return out, nil
 }

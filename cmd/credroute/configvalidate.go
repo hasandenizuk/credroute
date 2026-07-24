@@ -13,7 +13,7 @@ func cmdConfigValidate(args []string) int {
 	fs := flag.NewFlagSet("config validate", flag.ContinueOnError)
 	g := &globalFlags{}
 	addGlobalFlags(fs, g)
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
 		return 1
 	}
 

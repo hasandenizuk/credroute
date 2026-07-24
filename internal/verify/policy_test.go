@@ -93,6 +93,31 @@ func TestClassifyForResolve(t *testing.T) {
 			t.Fatalf("got %q, want %q", got, ResolveUnverified)
 		}
 	})
+
+	t.Run("unconfirmed status maps to unconfirmed, distinct from verified", func(t *testing.T) {
+		rec := &attest.Record{Status: attest.StatusUnconfirmed, CheckedAt: now}
+		got := ClassifyForResolve(rec, nil, maxAge, now)
+		if got != ResolveUnconfirmed {
+			t.Fatalf("got %q, want %q", got, ResolveUnconfirmed)
+		}
+	})
+}
+
+func TestResolveStatusForAttest(t *testing.T) {
+	cases := []struct {
+		in   attest.Status
+		want string
+	}{
+		{attest.StatusVerified, ResolveVerified},
+		{attest.StatusUnconfirmed, ResolveUnconfirmed},
+		{attest.StatusMismatch, ResolveMismatch},
+		{attest.StatusUnreadable, ResolveUnverified},
+	}
+	for _, tc := range cases {
+		if got := ResolveStatusForAttest(tc.in); got != tc.want {
+			t.Errorf("ResolveStatusForAttest(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
 }
 
 func TestShouldRefuse(t *testing.T) {
@@ -104,8 +129,10 @@ func TestShouldRefuse(t *testing.T) {
 		{"required", ResolveMismatch, true},
 		{"required", ResolveUnverified, true},
 		{"required", ResolveStale, true},
+		{"required", ResolveUnconfirmed, true},
 		{"required", ResolveVerified, false},
 		{"advisory", ResolveMismatch, false},
+		{"advisory", ResolveUnconfirmed, false},
 		{"advisory", ResolveUnverified, false},
 		{"off", ResolveMismatch, false},
 	}

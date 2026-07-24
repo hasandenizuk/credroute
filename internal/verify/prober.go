@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -62,10 +63,10 @@ const defaultGoogleUserinfoEndpoint = "https://openidconnect.googleapis.com/v1/u
 
 // GoogleOAuthProber probes a Google OAuth credential's live identity by
 // calling the userinfo endpoint with the credential's access token. It
-// makes a real network call, so the CLI only ever registers one when the
-// operator has explicitly opted in (see NewRegistry); unit tests exercise
-// it against an httptest server via Endpoint/HTTPClient, so `go test`
-// never reaches Google.
+// makes a real network call; unit tests exercise it against an httptest
+// server via Endpoint/HTTPClient, and every test run sets
+// CREDROUTE_NO_NETWORK=1 so LiveProbesEnabled() never registers this
+// prober against the real endpoint during `go test`.
 type GoogleOAuthProber struct {
 	// Endpoint overrides the userinfo URL. Empty uses the real Google
 	// endpoint; tests point this at an httptest.Server.
@@ -165,6 +166,114 @@ func (p *GoogleOAuthProber) Probe(ctx context.Context, secret *vault.Secret, pla
 	return body.Email, scopes, nil
 }
 
+// defaultGitHubUserEndpoint is GitHub's whoami endpoint (spec 5.3 table:
+// PAT -> live probe, GET /user -> login, X-OAuth-Scopes header).
+const defaultGitHubUserEndpoint = "https://api.github.com/user"
+
+// GitHubPATProber probes a GitHub PAT (or OAuth token used PAT-style) by
+// calling GET /user with it as a bearer token (spec 6.1 profile:
+// auth_header "Authorization: Bearer {secret}"). The vault secret for a
+// github pat/bearer_token credential is the raw token, not a JSON
+// document (unlike GoogleOAuthProber's oauth JSON blob), so Probe treats
+// the whole decrypted secret as the token string. It makes a real network
+// call; like GoogleOAuthProber it is only ever registered when
+// LiveProbesEnabled() is true, and every test sets CREDROUTE_NO_NETWORK=1.
+type GitHubPATProber struct {
+	Endpoint   string
+	HTTPClient *http.Client
+}
+
+// NewGitHubPATProber returns a prober configured against the real GitHub
+// endpoint with a bounded timeout.
+func NewGitHubPATProber() *GitHubPATProber {
+	return &GitHubPATProber{
+		Endpoint:   defaultGitHubUserEndpoint,
+		HTTPClient: &http.Client{Timeout: 10 * time.Second},
+	}
+}
+
+// Method implements Prober.
+func (p *GitHubPATProber) Method() string { return "http_whoami" }
+
+func (p *GitHubPATProber) endpoint() string {
+	if p.Endpoint != "" {
+		return p.Endpoint
+	}
+	return defaultGitHubUserEndpoint
+}
+
+func (p *GitHubPATProber) client() *http.Client {
+	if p.HTTPClient != nil {
+		return p.HTTPClient
+	}
+	return &http.Client{Timeout: 10 * time.Second}
+}
+
+// Probe implements Prober by calling GitHub's /user endpoint. platform
+// must be "github"; any other value is a caller error, returned as err.
+// Scopes are read from the X-OAuth-Scopes response header (spec 6.1
+// scopes_header) when GitHub reports it; a PAT with no visible scope
+// header (e.g. a fine-grained PAT) returns a nil scope list rather than an
+// error, since scope observation is optional per spec 5.3/6.2.
+func (p *GitHubPATProber) Probe(ctx context.Context, secret *vault.Secret, platform string) (string, []string, error) {
+	if platform != "github" {
+		return "", nil, fmt.Errorf("verify: github pat prober does not support platform %q", platform)
+	}
+	if secret == nil {
+		return "", nil, errors.New("verify: github pat prober got a nil secret")
+	}
+
+	var token string
+	err := secret.WithBytes(func(b []byte) error {
+		token = strings.TrimSpace(string(b))
+		return nil
+	})
+	if err != nil {
+		return "", nil, fmt.Errorf("verify: read github pat secret: %w", err)
+	}
+	if token == "" {
+		return "", nil, errors.New("verify: github credential secret is empty")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.endpoint(), nil)
+	if err != nil {
+		return "", nil, fmt.Errorf("verify: build github /user request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := p.client().Do(req)
+	if err != nil {
+		return "", nil, fmt.Errorf("verify: github /user request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", nil, fmt.Errorf("verify: github /user returned status %d", resp.StatusCode)
+	}
+
+	var body struct {
+		Login string `json:"login"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", nil, fmt.Errorf("verify: parse github /user response: %w", err)
+	}
+	if body.Login == "" {
+		return "", nil, errors.New("verify: github /user response has no login field")
+	}
+
+	var scopes []string
+	if raw := resp.Header.Get("X-OAuth-Scopes"); raw != "" {
+		for _, s := range strings.Split(raw, ",") {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				scopes = append(scopes, s)
+			}
+		}
+	}
+	return body.Login, scopes, nil
+}
+
 // Registry picks the best available prober for a platform, falling back to
 // the generic fingerprint prober when nothing more specific is registered
 // (spec 5.3: "Registry that picks the best prober for a platform, falling
@@ -174,12 +283,23 @@ type Registry struct {
 	fallback   Prober
 }
 
-// NewRegistry builds a registry. When enableLiveProbes is false (the
-// default unless the operator opts in, see cmd/credroute/verify.go), no
+// LiveProbesEnabled reports whether live, network-touching identity
+// probers should be registered. F2: `verify:required` runs the live probe
+// by default whenever a platform has one, so this defaults to true.
+// Set CREDROUTE_NO_NETWORK=1 to force every platform back to the generic
+// fingerprint prober; this is the switch every test that could otherwise
+// reach a real network endpoint sets via t.Setenv, replacing the old
+// opt-in CREDROUTE_LIVE_PROBE=1 gate.
+func LiveProbesEnabled() bool {
+	return os.Getenv("CREDROUTE_NO_NETWORK") != "1"
+}
+
+// NewRegistry builds a registry. When enableLiveProbes is false, no
 // live-network prober is registered for any platform and every platform
-// falls back to the fingerprint prober; this is the gate that keeps
-// `go test` (and any accidental non-interactive run) from ever reaching a
-// real identity endpoint.
+// falls back to the fingerprint prober. Callers in cmd/credroute pass
+// LiveProbesEnabled(); tests that want a specific prober without touching
+// the real network register one directly via Register, or construct a
+// prober pointed at an httptest server.
 func NewRegistry(enableLiveProbes bool) *Registry {
 	r := &Registry{
 		byPlatform: map[string]Prober{},
@@ -187,6 +307,7 @@ func NewRegistry(enableLiveProbes bool) *Registry {
 	}
 	if enableLiveProbes {
 		r.byPlatform["google"] = NewGoogleOAuthProber()
+		r.byPlatform["github"] = NewGitHubPATProber()
 	}
 	return r
 }

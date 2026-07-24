@@ -23,19 +23,22 @@ import (
 
 // Entry is one audit log line (spec 9.3 example).
 type Entry struct {
-	TS           time.Time `json:"ts"`
-	ID           string    `json:"id"`
-	Op           string    `json:"op"` // resolve | exec | verify
-	Dir          string    `json:"dir,omitempty"`
-	Platform     string    `json:"platform,omitempty"`
-	Task         string    `json:"task,omitempty"`
-	Rule         string    `json:"rule,omitempty"`
-	Identity     string    `json:"identity,omitempty"`
-	Access       string    `json:"access,omitempty"`
-	Verification string    `json:"verification,omitempty"`
-	Exit         int       `json:"exit"`
-	Decision     string    `json:"decision"` // allow | refuse
-	Caller       string    `json:"caller,omitempty"`
+	TS       time.Time `json:"ts"`
+	ID       string    `json:"id"`
+	Op       string    `json:"op"` // resolve | exec | verify
+	Dir      string    `json:"dir,omitempty"`
+	Platform string    `json:"platform,omitempty"`
+	Task     string    `json:"task,omitempty"`
+	Rule     string    `json:"rule,omitempty"`
+	// Client is the client name the matched rule's match.client named, if
+	// any (F17: lets `credroute audit --client` filter by it).
+	Client       string `json:"client,omitempty"`
+	Identity     string `json:"identity,omitempty"`
+	Access       string `json:"access,omitempty"`
+	Verification string `json:"verification,omitempty"`
+	Exit         int    `json:"exit"`
+	Decision     string `json:"decision"` // allow | refuse
+	Caller       string `json:"caller,omitempty"`
 }
 
 // NewID generates an opaque, sortable-by-time identifier for one audit
@@ -81,6 +84,13 @@ func LogPath() (string, error) {
 // call sites (resolve/exec/verify never fail an operation just because
 // the audit log could not be written), but returns any error so a caller
 // that does want to surface it (or a test) can.
+//
+// F14: the file is opened O_APPEND, and Go's Write issues one write()
+// syscall for the single JSON line, which POSIX serializes at the kernel
+// level against other O_APPEND writers to the same file, so concurrent
+// `credroute` runs cannot interleave or corrupt each other's line. Sync
+// adds durability on top: a crash immediately after Append no longer
+// silently loses the entry.
 func Append(e Entry) error {
 	if e.ID == "" {
 		e.ID = NewID()
@@ -110,6 +120,9 @@ func Append(e Entry) error {
 	defer f.Close()
 	if _, err := f.Write(b); err != nil {
 		return fmt.Errorf("audit: write %s: %w", path, err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("audit: fsync %s: %w", path, err)
 	}
 	return nil
 }
@@ -151,6 +164,8 @@ type Filter struct {
 	Platform string
 	// Identity, if non-empty, keeps only entries with an exact match.
 	Identity string
+	// Client, if non-empty, keeps only entries with an exact match (F17).
+	Client string
 	// FailuresOnly keeps only entries with a non-zero exit code (spec
 	// 9.3: "refusals are always logged: the audit trail of what almost
 	// went wrong is the operational payoff").
@@ -169,6 +184,9 @@ func Query(entries []Entry, f Filter) []Entry {
 			continue
 		}
 		if f.Identity != "" && e.Identity != f.Identity {
+			continue
+		}
+		if f.Client != "" && e.Client != f.Client {
 			continue
 		}
 		if f.FailuresOnly && e.Exit == 0 {

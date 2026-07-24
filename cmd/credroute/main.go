@@ -54,6 +54,8 @@ func run(args []string) int {
 			return 1
 		}
 		return cmdHandleGet(rest[1:])
+	case "hook":
+		return cmdHook(rest)
 	case "version":
 		return cmdVersion(rest)
 	case "-h", "--help", "help":
@@ -71,20 +73,29 @@ func printUsage() {
 
 Usage:
   credroute init [--yes] [--config <path>] [--vault-dir <path>] [--identity-file <path>] [--identity <id>]
-  credroute resolve --platform <name> [--dir <path>] [--task <tag>] [--verify=required|advisory|off] [--json]
+  credroute resolve --platform <name> [--dir <path>] [--task <tag>] [--access <level>] [--verify=required|advisory|off] [--json]
   credroute explain [--all] --platform <name> [--dir <path>] [--task <tag>] [--json]
-  credroute exec [--platform <name>] [--dir <path>] [--task <tag>] -- <cmd> [args...]
+  credroute exec [--platform <name>] [--dir <path>] [--task <tag>] [--access <level>] [--export-generic] -- <cmd> [args...]
   credroute verify [--slot <path> | --platform <name> [--dir <path>] [--task <tag>]] [--after-login] [--json]
   credroute config validate [path]
   credroute doctor
   credroute profiles ls [--json]
   credroute profiles show <platform> [--task <tag>] [--json]
   credroute adapter install <claude-code|codex|agy> [--dir <path>] [--dry-run] [--force]
-  credroute audit [--since <dur>] [--platform <name>] [--identity <id>] [--failures] [--json]
+  credroute audit [--since <dur>] [--platform <name>] [--identity <id>] [--client <name>] [--failures] [--json]
   credroute handle get <vault-handle> [--to-file <path> | --to-fd <n> | --force-reveal]
+  credroute hook claude-code   (reads PreToolUse JSON on stdin, F6)
   credroute version
 
+Flags may appear anywhere on the command line, before or after positional
+arguments (e.g. "handle get <handle> --to-file x" and "adapter install
+<name> --force" both work).
+
 Global flags: --config <path>  --json  --quiet  -v
+
+Environment: CREDROUTE_CONFIG overrides the default config path when
+--config is not given. CREDROUTE_NO_NETWORK=1 disables every live
+identity-verification probe (used by tests; never set this for real use).
 
 Exit codes: 0 ok, 1 usage error, 2 no rule matched (fail closed),
 3 identity verification mismatch or unverifiable under verify:required,

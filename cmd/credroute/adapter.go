@@ -28,7 +28,7 @@ func cmdAdapterInstall(args []string) int {
 	dirFlag := fs.String("dir", "", "target directory (default: the adapter's conventional location)")
 	dryRun := fs.Bool("dry-run", false, "print what would be written without writing")
 	force := fs.Bool("force", false, "overwrite files that already exist")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {

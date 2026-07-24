@@ -43,7 +43,7 @@ func cmdProfilesLs(args []string) int {
 	fs := flag.NewFlagSet("profiles ls", flag.ContinueOnError)
 	g := &globalFlags{}
 	addGlobalFlags(fs, g)
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
 		return 1
 	}
 
@@ -104,7 +104,7 @@ func cmdProfilesShow(args []string) int {
 	g := &globalFlags{}
 	addGlobalFlags(fs, g)
 	task := fs.String("task", "", "show the scope set for this task/alias instead of the union")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {

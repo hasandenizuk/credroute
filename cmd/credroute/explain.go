@@ -47,7 +47,7 @@ func cmdExplain(args []string) int {
 	platform := fs.String("platform", "", "platform to resolve (required)")
 	task := fs.String("task", "", "task tag")
 	dir := fs.String("dir", "", "directory to resolve for (default: cwd)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
 		return 1
 	}
 	if *platform == "" {
@@ -99,11 +99,7 @@ func cmdExplain(args []string) int {
 		}
 		if res.CredentialFound {
 			resp.Result.VaultHandle = res.Credential.Vault
-			if slot, expErr := rules.ExpandHome(res.Credential.Slot); expErr == nil {
-				resp.Result.Slot = slot
-			} else {
-				resp.Result.Slot = res.Credential.Slot
-			}
+			resp.Result.Slot = expandSlot(res.Credential.Slot)
 		}
 	}
 

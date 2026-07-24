@@ -1,41 +1,24 @@
 #!/usr/bin/env bash
-# credroute PreToolUse hook (spec 8.2): detects credential-shaped Bash
-# commands and runs `credroute resolve --quiet` before allowing them
-# through. Exit 2 or 3 from credroute denies the tool call with a
-# remediation hint; exit 0 allows it. This adapter is glue only, never
-# logic: all routing and verification stay in the credroute binary.
+# credroute PreToolUse hook (spec 8.2, F6 fix). This file is glue only,
+# never logic (spec 8.1): Claude Code delivers the PreToolUse payload as
+# JSON on stdin, and this script's only job is to pipe that straight into
+# `credroute hook claude-code`, which does all the parsing, platform
+# detection, and resolve/verify decision, then writes Claude Code's
+# allow/deny decision JSON back to stdout with the matching exit code.
+#
+# The previous version of this file tried to read the command from $1 or
+# $TOOL_INPUT_COMMAND; Claude Code never populates either for a PreToolUse
+# hook, so it always saw an empty command and allowed everything through.
+# Piping stdin through unchanged is what actually works.
 #
 # Wire this into .claude/settings.json as a PreToolUse hook on the Bash
-# matcher. It reads the attempted command as $1 (or on stdin, harness
-# dependent) and infers a platform from a short detection list; unknown
-# commands are allowed through untouched (fail open outside a route the
-# operator has actually configured).
+# matcher.
 set -euo pipefail
-
-COMMAND="${1:-${TOOL_INPUT_COMMAND:-}}"
-PLATFORM=""
-
-case "$COMMAND" in
-  *gws*|*gmail*|*gdrive*|*google*|*gtm-ga4*) PLATFORM="google" ;;
-  *"gh "*|*"git push"*|*github*) PLATFORM="github" ;;
-esac
-
-if [ -z "$PLATFORM" ]; then
-  # Not a credentialed command credroute knows about: allow through.
-  exit 0
-fi
 
 if ! command -v credroute >/dev/null 2>&1; then
   # credroute not installed/on PATH: fail open rather than block every
-  # credentialed command in a session where the router isn't set up yet.
+  # tool call in a session where the router isn't set up yet.
   exit 0
 fi
 
-credroute resolve --platform "$PLATFORM" --quiet
-status=$?
-if [ "$status" -eq 0 ]; then
-  exit 0
-fi
-
-echo "credroute: refused ($PLATFORM, exit $status). Run \`credroute resolve --platform $PLATFORM\` for the remediation detail." >&2
-exit "$status"
+exec credroute hook claude-code

@@ -26,8 +26,13 @@ func TestRun_FirstAttestation_FingerprintOnly_EstablishesBaseline(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if out.Status != attest.StatusVerified {
-		t.Fatalf("Status = %q, want verified for a first-time fingerprint baseline", out.Status)
+	// F2: a fingerprint-only first observation must never claim "verified"
+	// - no prober confirmed the account, so it caps at "unconfirmed".
+	if out.Status != attest.StatusUnconfirmed {
+		t.Fatalf("Status = %q, want unconfirmed for a first-time fingerprint baseline", out.Status)
+	}
+	if out.IdentityConfirmed {
+		t.Fatal("IdentityConfirmed = true for a fingerprint-only baseline, want false")
 	}
 	if out.Method != "fingerprint" {
 		t.Fatalf("Method = %q, want fingerprint", out.Method)
@@ -37,8 +42,11 @@ func TestRun_FirstAttestation_FingerprintOnly_EstablishesBaseline(t *testing.T) 
 	if err != nil {
 		t.Fatalf("attest.Read after Run: %v", err)
 	}
-	if rec.Status != attest.StatusVerified {
-		t.Fatalf("recorded status = %q, want verified", rec.Status)
+	if rec.Status != attest.StatusUnconfirmed {
+		t.Fatalf("recorded status = %q, want unconfirmed", rec.Status)
+	}
+	if rec.IdentityConfirmed {
+		t.Fatal("recorded IdentityConfirmed = true for a fingerprint-only baseline, want false")
 	}
 	if rec.Fingerprint == "" {
 		t.Fatal("recorded fingerprint is empty")
@@ -63,8 +71,8 @@ func TestRun_FingerprintChange_IsMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
-	if out1.Status != attest.StatusVerified {
-		t.Fatalf("first Run status = %q, want verified (establishes baseline)", out1.Status)
+	if out1.Status != attest.StatusUnconfirmed {
+		t.Fatalf("first Run status = %q, want unconfirmed (fingerprint-only baseline, F2)", out1.Status)
 	}
 
 	// Simulate exactly the origin bug: the slot's secret silently changes
@@ -84,8 +92,8 @@ func TestRun_FingerprintChange_IsMismatch(t *testing.T) {
 	if out2.Status != attest.StatusMismatch {
 		t.Fatalf("second Run status = %q, want mismatch after the secret changed", out2.Status)
 	}
-	if out2.PriorStatus != attest.StatusVerified {
-		t.Fatalf("PriorStatus = %q, want verified (the prior baseline)", out2.PriorStatus)
+	if out2.PriorStatus != attest.StatusUnconfirmed {
+		t.Fatalf("PriorStatus = %q, want unconfirmed (the prior baseline)", out2.PriorStatus)
 	}
 
 	// Reality must be recorded, not the old label: read the sidecar back
@@ -155,6 +163,9 @@ func TestRun_IdentityMatch_Verified(t *testing.T) {
 	}
 	if out.Status != attest.StatusVerified {
 		t.Fatalf("Status = %q, want verified", out.Status)
+	}
+	if !out.IdentityConfirmed {
+		t.Fatal("IdentityConfirmed = false for a prober-confirmed match, want true")
 	}
 	if out.ObservedIdentity != "reports@acme-corp.com" {
 		t.Fatalf("ObservedIdentity = %q", out.ObservedIdentity)
@@ -232,12 +243,79 @@ func TestRun_TamperedPriorSidecar_ReestablishesBaseline(t *testing.T) {
 	}
 	// A tampered prior must never be trusted as evidence of anything; Run
 	// re-establishes a fresh baseline rather than either silently passing
-	// or blaming the (unrelated) current secret.
-	if out.Status != attest.StatusVerified {
-		t.Fatalf("Status after tampered-prior recovery = %q, want verified (fresh baseline)", out.Status)
+	// or blaming the (unrelated) current secret. F2: that fresh baseline
+	// is fingerprint-only, so it is honestly "unconfirmed", not "verified".
+	if out.Status != attest.StatusUnconfirmed {
+		t.Fatalf("Status after tampered-prior recovery = %q, want unconfirmed (fresh baseline)", out.Status)
 	}
 	if out.Detail == "" {
 		t.Fatal("expected Detail to note the tampered prior was ignored")
+	}
+}
+
+// TestRun_OAuthTokenRefresh_DoesNotTripMismatch is F7: a normal OAuth
+// token refresh rotates access_token (and its expiry) while refresh_token
+// - the stable, account-scoped field - stays the same. The fingerprint
+// must be computed over that stable field for oauth credentials, so a
+// refresh is never mistaken for the secret being swapped out from under
+// the slot.
+func TestRun_OAuthTokenRefresh_DoesNotTripMismatch(t *testing.T) {
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
+
+	handle := "age://google/reports-acme-corp-com/gsc-ro.json.age"
+	before := vault.NewSecret([]byte(`{"access_token":"ya29.old-token","refresh_token":"1//stable-refresh-token","expiry":"2026-07-23T10:00:00Z"}`))
+	first := Request{
+		Platform:         "google",
+		CredentialType:   "oauth",
+		ExpectedIdentity: "reports@acme-corp.com",
+		VaultHandle:      handle,
+		Secret:           before,
+	}
+	out1, err := Run(context.Background(), first, NewRegistry(false))
+	if err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if out1.Status != attest.StatusUnconfirmed {
+		t.Fatalf("first Run status = %q, want unconfirmed baseline", out1.Status)
+	}
+
+	// A normal token refresh: same refresh_token, new access_token and
+	// expiry. This must NOT read as a fingerprint change.
+	after := vault.NewSecret([]byte(`{"access_token":"ya29.brand-new-token","refresh_token":"1//stable-refresh-token","expiry":"2026-07-24T10:00:00Z"}`))
+	second := Request{
+		Platform:         "google",
+		CredentialType:   "oauth",
+		ExpectedIdentity: "reports@acme-corp.com",
+		VaultHandle:      handle,
+		Secret:           after,
+	}
+	out2, err := Run(context.Background(), second, NewRegistry(false))
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if out2.Status == attest.StatusMismatch {
+		t.Fatalf("second Run status = %q after a normal token refresh, want no mismatch (F7)", out2.Status)
+	}
+	if out2.Fingerprint != out1.Fingerprint {
+		t.Fatalf("fingerprint changed across a token refresh: %q -> %q, want stable (computed over refresh_token)", out1.Fingerprint, out2.Fingerprint)
+	}
+
+	// A real credential swap (different refresh_token = different
+	// account) must still be caught.
+	swapped := vault.NewSecret([]byte(`{"access_token":"ya29.attacker-token","refresh_token":"1//a-different-refresh-token","expiry":"2026-07-24T10:00:00Z"}`))
+	third := Request{
+		Platform:         "google",
+		CredentialType:   "oauth",
+		ExpectedIdentity: "reports@acme-corp.com",
+		VaultHandle:      handle,
+		Secret:           swapped,
+	}
+	out3, err := Run(context.Background(), third, NewRegistry(false))
+	if err != nil {
+		t.Fatalf("third Run: %v", err)
+	}
+	if out3.Status != attest.StatusMismatch {
+		t.Fatalf("third Run status = %q after a real refresh_token swap, want mismatch", out3.Status)
 	}
 }
 

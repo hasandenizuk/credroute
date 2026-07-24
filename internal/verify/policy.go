@@ -48,20 +48,26 @@ func EffectiveVerifyMode(cliFlag, ruleVerify, defaultsVerify string) string {
 	return base
 }
 
-// Resolve-facing verification statuses (spec 4.2's "verification.status",
-// milestone 2 scope: verified, stale, mismatch, unverified).
+// Resolve-facing verification statuses (spec 4.2's "verification.status").
+// ResolveUnconfirmed (F2) reports a fingerprint-only baseline honestly,
+// distinct from ResolveVerified (a prober actually confirmed the
+// identity) and from ResolveUnverified (no usable sidecar at all); it is
+// treated exactly like ResolveUnverified by ShouldRefuse.
 const (
-	ResolveVerified   = "verified"
-	ResolveStale      = "stale"
-	ResolveMismatch   = "mismatch"
-	ResolveUnverified = "unverified"
+	ResolveVerified    = "verified"
+	ResolveUnconfirmed = "unconfirmed"
+	ResolveStale       = "stale"
+	ResolveMismatch    = "mismatch"
+	ResolveUnverified  = "unverified"
 )
 
 // ClassifyForResolve turns a sidecar read (rec, readErr) into the status
-// resolve reports and enforces against: verified (fresh and matching),
-// stale (verified but older than maxAge), mismatch, or unverified (no
-// sidecar, or one that failed its integrity check). maxAge <= 0 disables
-// staleness (a verified sidecar never expires).
+// resolve reports and enforces against: verified (fresh, prober-confirmed
+// and matching), unconfirmed (fresh fingerprint-only baseline, identity
+// never independently confirmed), stale (verified but older than maxAge),
+// mismatch, or unverified (no sidecar, or one that failed its integrity
+// check). maxAge <= 0 disables staleness (a verified sidecar never
+// expires).
 func ClassifyForResolve(rec *attest.Record, readErr error, maxAge time.Duration, now time.Time) string {
 	if readErr != nil || rec == nil {
 		// Covers attest.ErrNotFound and attest.ErrTampered alike: neither
@@ -78,6 +84,8 @@ func ClassifyForResolve(rec *attest.Record, readErr error, maxAge time.Duration,
 		return ResolveMismatch
 	case attest.StatusUnreadable:
 		return ResolveUnverified
+	case attest.StatusUnconfirmed:
+		return ResolveUnconfirmed
 	case attest.StatusVerified:
 		if maxAge > 0 && now.Sub(rec.CheckedAt) > maxAge {
 			return ResolveStale
@@ -88,20 +96,41 @@ func ClassifyForResolve(rec *attest.Record, readErr error, maxAge time.Duration,
 	}
 }
 
+// ResolveStatusForAttest maps a freshly-observed attest.Status (e.g. from
+// a live verify.Run just performed, as `credroute exec` does per F1/spec
+// 5.2 "record reality on every path") to the resolve-facing status
+// string, without needing a fresh sidecar read: the observation IS fresh
+// (CheckedAt == now), so staleness never applies.
+func ResolveStatusForAttest(status attest.Status) string {
+	switch status {
+	case attest.StatusVerified:
+		return ResolveVerified
+	case attest.StatusUnconfirmed:
+		return ResolveUnconfirmed
+	case attest.StatusMismatch:
+		return ResolveMismatch
+	default:
+		return ResolveUnverified
+	}
+}
+
 // ShouldRefuse reports whether resolve/exec must fail closed (spec exit
 // code 3) given the effective verify mode and a resolve-facing status from
-// ClassifyForResolve. Only "required" ever refuses; "advisory" reports the
-// status but proceeds, and "off" ignores verification entirely (spec
-// 5.4/4.3). Under "required", a stale sidecar no longer substitutes for a
-// live probe (spec: "sidecar_max_age bounds how long a verified sidecar
-// substitutes for a live probe"), so it refuses exactly like mismatch or
-// unverified until a fresh `credroute verify` clears it.
+// ClassifyForResolve/ResolveStatusForAttest. Only "required" ever refuses;
+// "advisory" reports the status but proceeds, and "off" ignores
+// verification entirely (spec 5.4/4.3). Under "required": a stale sidecar
+// no longer substitutes for a live probe (spec: "sidecar_max_age bounds
+// how long a verified sidecar substitutes for a live probe"); an
+// unconfirmed fingerprint-only baseline never satisfies "required" either
+// (F2: only a prober-confirmed identity does) unless a rule opts down to
+// "advisory". Both refuse exactly like mismatch or unverified until a
+// fresh, identity-confirming `credroute verify` clears them.
 func ShouldRefuse(mode, status string) bool {
 	if mode != "required" {
 		return false
 	}
 	switch status {
-	case ResolveMismatch, ResolveUnverified, ResolveStale:
+	case ResolveMismatch, ResolveUnverified, ResolveStale, ResolveUnconfirmed:
 		return true
 	default:
 		return false
