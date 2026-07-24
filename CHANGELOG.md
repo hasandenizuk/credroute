@@ -8,3 +8,9 @@
 - added: v0.1.0, the first tagged release — a stranger can now download a working binary from the GitHub releases page instead of needing a Go toolchain
 - fixed: `init`'s default vault directory was hardcoded to a machine-specific path, and that value leaked into --help text, the describe manifest, examples/config.yaml, and the spec; replaced with a generic default
 - added: v0.1.1, superseding v0.1.0 to ship the fix above; v0.1.0 remains published but should not be recommended for new installs
+- changed: the release workflow now runs vet, the gofmt gate and the test suite before it builds anything, because pushing a tag does not trigger CI and a release could otherwise be cut from an untested commit
+- fixed: `credroute version` falls back to the module build info, so a `go install` build reports its real version and commit instead of a stale hardcoded default
+- removed: v0.1.0 is retracted in go.mod; `go list -m -versions` and `go get` now flag it as one to avoid
+- added: concurrency groups and per-job timeouts on both workflows
+- fixed: the roadmap said the age backend used a Go library; it shells out to the `age` binary, which is what the one-dependency policy requires
+- added: v0.1.2, carrying the retraction and the release-gate fixes above
