@@ -74,3 +74,19 @@ func resolveQueryDir(dirFlag string) (string, error) {
 	}
 	return os.Getwd()
 }
+
+// decisionFor maps an exit code to the audit log's coarse allow/refuse
+// decision (spec 9.3: "decision":"allow"/"refuse"). Only exit 0 allows;
+// every non-zero exit is a refusal of some kind.
+func decisionFor(exitCode int) string {
+	if exitCode == 0 {
+		return "allow"
+	}
+	return "refuse"
+}
+
+// auditCaller is the caller label recorded on every audit entry logged
+// directly by this CLI (as opposed to a harness adapter calling
+// credroute itself, which would pass its own caller label if this were
+// exposed as a flag; milestone 3 keeps it fixed).
+const auditCaller = "cli"

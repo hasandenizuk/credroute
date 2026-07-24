@@ -40,6 +40,20 @@ func run(args []string) int {
 		return cmdConfigValidate(rest[1:])
 	case "doctor":
 		return cmdDoctor(rest)
+	case "init":
+		return cmdInit(rest)
+	case "profiles":
+		return cmdProfiles(rest)
+	case "adapter":
+		return cmdAdapter(rest)
+	case "audit":
+		return cmdAudit(rest)
+	case "handle":
+		if len(rest) == 0 || rest[0] != "get" {
+			fmt.Fprintln(os.Stderr, "credroute handle: expected subcommand \"get\"")
+			return 1
+		}
+		return cmdHandleGet(rest[1:])
 	case "version":
 		return cmdVersion(rest)
 	case "-h", "--help", "help":
@@ -56,12 +70,18 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, `credroute - deterministic credential router for AI-agent CLI harnesses
 
 Usage:
+  credroute init [--yes] [--config <path>] [--vault-dir <path>] [--identity-file <path>] [--identity <id>]
   credroute resolve --platform <name> [--dir <path>] [--task <tag>] [--verify=required|advisory|off] [--json]
   credroute explain [--all] --platform <name> [--dir <path>] [--task <tag>] [--json]
   credroute exec [--platform <name>] [--dir <path>] [--task <tag>] -- <cmd> [args...]
   credroute verify [--slot <path> | --platform <name> [--dir <path>] [--task <tag>]] [--after-login] [--json]
   credroute config validate [path]
   credroute doctor
+  credroute profiles ls [--json]
+  credroute profiles show <platform> [--task <tag>] [--json]
+  credroute adapter install <claude-code|codex|agy> [--dir <path>] [--dry-run] [--force]
+  credroute audit [--since <dur>] [--platform <name>] [--identity <id>] [--failures] [--json]
+  credroute handle get <vault-handle> [--to-file <path> | --to-fd <n> | --force-reveal]
   credroute version
 
 Global flags: --config <path>  --json  --quiet  -v

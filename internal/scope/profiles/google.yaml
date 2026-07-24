@@ -1,0 +1,25 @@
+# Built-in scope profile for platform "google" (spec section 6.1, verbatim
+# worked example). Access levels map to a scope set per task/alias
+# (gsc, ga4, drive); Registry.Resolve falls back to the union of every
+# alias's scopes when no task is given or the task is not recognized.
+platform: google
+aliases: [gmail, drive, gsc, ga4, gtm]
+credential_types: [oauth]
+identity_probe:
+  method: oauth_userinfo
+  endpoint: https://openidconnect.googleapis.com/v1/userinfo
+  identity_field: email
+access_levels:
+  read-only:
+    scopes:
+      gsc: ["https://www.googleapis.com/auth/webmasters.readonly"]
+      ga4: ["https://www.googleapis.com/auth/analytics.readonly"]
+      drive: ["https://www.googleapis.com/auth/drive.readonly"]
+  read-write:
+    scopes:
+      gsc: ["https://www.googleapis.com/auth/webmasters"]
+      ga4: ["https://www.googleapis.com/auth/analytics.edit"]
+      drive: ["https://www.googleapis.com/auth/drive"]
+login:
+  helper: "gws auth login --scopes {scopes} --profile-dir {slot}"
+exec_env: GOOGLE_OAUTH_TOKEN_JSON

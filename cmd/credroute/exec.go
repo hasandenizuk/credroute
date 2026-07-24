@@ -8,21 +8,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
+	"github.com/hasandenizuk/credroute/internal/audit"
 	"github.com/hasandenizuk/credroute/internal/config"
 	"github.com/hasandenizuk/credroute/internal/rules"
+	"github.com/hasandenizuk/credroute/internal/scope"
 	"github.com/hasandenizuk/credroute/internal/vault"
 )
 
-// execEnvVars maps a platform to the credential env var its scope profile
-// (spec section 6.1) declares. Milestone 1 hardcodes the two profiles the
-// spec worked example uses; the full profile system is milestone 3.
-var execEnvVars = map[string]string{
-	"google": "GOOGLE_OAUTH_TOKEN_JSON",
-	"github": "GH_TOKEN",
-}
-
-func cmdExec(args []string) int {
+func cmdExec(args []string) (exitCode int) {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	g := &globalFlags{}
 	addGlobalFlags(fs, g)
@@ -48,6 +43,18 @@ func cmdExec(args []string) int {
 		return 1
 	}
 
+	// Every return point below this line has enough context to be worth
+	// an audit entry (spec 9.3: "refusals are always logged"); the
+	// deferred append fires with whatever exitCode the return path set,
+	// success or refusal alike. Best-effort: an audit write failure never
+	// changes exec's own exit code.
+	entry := audit.Entry{ID: audit.NewID(), Op: "exec", Dir: queryDir, Platform: *platform, Task: *task, Caller: auditCaller}
+	defer func() {
+		entry.Exit = exitCode
+		entry.Decision = decisionFor(exitCode)
+		_ = audit.Append(entry)
+	}()
+
 	cfg, err := loadAndValidate(g.configPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "credroute exec:", err)
@@ -64,6 +71,9 @@ func cmdExec(args []string) int {
 		return 2
 	}
 	res := result.Resolution
+	entry.Identity = res.Identity
+	entry.Access = res.Access
+	entry.Rule = res.Rule.ID
 	if !res.CredentialFound {
 		fmt.Fprintf(os.Stderr, "credroute exec: identity %q has no %q credential for platform %q\n", res.Identity, res.Access, *platform)
 		return 5
@@ -82,6 +92,14 @@ func cmdExec(args []string) int {
 	}
 	defer secret.Zero()
 
+	// Scope resolution (D7/D10, spec 6.1): the platform's scope profile
+	// names the env var the secret is injected under, plus (informational
+	// only) the scope set that credential is expected to carry.
+	var scopeResult scope.Result
+	if scopeReg, scopeErr := scope.LoadDefaultRegistry(); scopeErr == nil {
+		scopeResult = scopeReg.Resolve(*platform, res.Access, *task)
+	}
+
 	if !g.quiet {
 		fmt.Fprintf(os.Stderr, "credroute: %s (%s, %s, rule=%s) -> %s\n", res.Identity, *platform, res.Access, res.Rule.ID, childArgs[0])
 	}
@@ -94,8 +112,11 @@ func cmdExec(args []string) int {
 	runErr := secret.WithBytes(func(b []byte) error {
 		env := os.Environ()
 		env = append(env, "CREDROUTE_SECRET="+string(b))
-		if varName, ok := execEnvVars[*platform]; ok {
-			env = append(env, varName+"="+string(b))
+		if scopeResult.ExecEnv != "" {
+			env = append(env, scopeResult.ExecEnv+"="+string(b))
+		}
+		if len(scopeResult.Scopes) > 0 {
+			env = append(env, "CREDROUTE_SCOPES="+strings.Join(scopeResult.Scopes, ","))
 		}
 		cmd.Env = env
 		// The secret never touches argv or stdout/stderr; it exists only

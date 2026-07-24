@@ -12,6 +12,7 @@ import (
 	"os"
 
 	"github.com/hasandenizuk/credroute/internal/attest"
+	"github.com/hasandenizuk/credroute/internal/audit"
 	"github.com/hasandenizuk/credroute/internal/config"
 	"github.com/hasandenizuk/credroute/internal/rules"
 	"github.com/hasandenizuk/credroute/internal/vault"
@@ -24,6 +25,7 @@ type verifyResponse struct {
 	Version          int      `json:"version"`
 	Status           string   `json:"status"` // verified | mismatch | unreadable | error
 	Platform         string   `json:"platform,omitempty"`
+	AccessLevel      string   `json:"access_level,omitempty"`
 	ExpectedIdentity string   `json:"expected_identity,omitempty"`
 	ObservedIdentity string   `json:"observed_identity,omitempty"`
 	Method           string   `json:"method,omitempty"`
@@ -107,17 +109,16 @@ func cmdVerify(args []string) int {
 		identityID, platformName, access = res.Identity, *platform, res.Access
 		cred = res.Credential
 	}
-	_ = access // access level is not itself part of the identity check; kept for future scope-derived checks (milestone 3)
 
 	backend, err := buildVaultBackend(cfg)
 	if err != nil {
-		return emitVerifyOutcome(g, verifyResponse{Version: 1, Status: "error", Detail: err.Error()}, 4)
+		return emitVerifyOutcome(g, verifyResponse{Version: 1, Status: "error", Platform: platformName, AccessLevel: access, Detail: err.Error()}, 4)
 	}
 
 	ctx := context.Background()
 	secret, err := backend.Retrieve(ctx, vault.Handle(cred.Vault))
 	if err != nil {
-		return emitVerifyOutcome(g, verifyResponse{Version: 1, Status: "error", VaultHandle: cred.Vault, Detail: err.Error()}, 4)
+		return emitVerifyOutcome(g, verifyResponse{Version: 1, Status: "error", Platform: platformName, AccessLevel: access, VaultHandle: cred.Vault, Detail: err.Error()}, 4)
 	}
 	defer secret.Zero()
 
@@ -150,7 +151,7 @@ func cmdVerify(args []string) int {
 	outcome, runErr := verify.Run(ctx, req, registry)
 	if runErr != nil {
 		return emitVerifyOutcome(g, verifyResponse{
-			Version: 1, Status: "error", Platform: platformName, ExpectedIdentity: identityID,
+			Version: 1, Status: "error", Platform: platformName, AccessLevel: access, ExpectedIdentity: identityID,
 			Slot: slot, VaultHandle: cred.Vault, Detail: runErr.Error(),
 		}, 1)
 	}
@@ -159,6 +160,7 @@ func cmdVerify(args []string) int {
 		Version:          1,
 		Status:           string(outcome.Status),
 		Platform:         platformName,
+		AccessLevel:      access,
 		ExpectedIdentity: identityID,
 		ObservedIdentity: outcome.ObservedIdentity,
 		Method:           outcome.Method,
@@ -207,6 +209,8 @@ func findCredentialBySlot(cfg *config.Config, expandedSlot string) (identityID, 
 }
 
 func emitVerifyOutcome(g *globalFlags, resp verifyResponse, exitCode int) int {
+	logVerifyAudit(resp, exitCode)
+
 	if wantJSON(g) {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -239,4 +243,21 @@ func emitVerifyOutcome(g *globalFlags, resp verifyResponse, exitCode int) int {
 		fmt.Printf("detail            %s\n", resp.Detail)
 	}
 	return exitCode
+}
+
+// logVerifyAudit appends one audit entry (spec 9.3) for every verify
+// call, success or refusal alike. Best-effort: a failure to write the
+// audit log never changes verify's own exit code.
+func logVerifyAudit(resp verifyResponse, exitCode int) {
+	e := audit.Entry{
+		Op:           "verify",
+		Platform:     resp.Platform,
+		Identity:     resp.ExpectedIdentity,
+		Access:       resp.AccessLevel,
+		Verification: resp.Status,
+		Exit:         exitCode,
+		Decision:     decisionFor(exitCode),
+		Caller:       auditCaller,
+	}
+	_ = audit.Append(e)
 }

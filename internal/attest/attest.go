@@ -153,6 +153,14 @@ func loadOrCreateMachineKey() ([]byte, error) {
 	return key, nil
 }
 
+// EnsureMachineKey generates the machine-local HMAC key if it does not
+// already exist. Exposed for `credroute init` (milestone 3) so first-run
+// setup can prepare the key before any verify/resolve call needs it.
+func EnsureMachineKey() error {
+	_, err := loadOrCreateMachineKey()
+	return err
+}
+
 // computeHMAC returns the "b64:..." HMAC-SHA256 of rec's canonical JSON
 // (its HMAC field always excluded) keyed by key. rec is passed by value so
 // clearing HMAC here never mutates the caller's copy.

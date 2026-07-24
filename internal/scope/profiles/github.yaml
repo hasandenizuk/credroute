@@ -1,0 +1,17 @@
+# Built-in scope profile for platform "github" (spec section 6.1, verbatim
+# worked example). Access levels map directly to a flat PAT scope list
+# (github does not sub-divide by task/alias the way google does).
+platform: github
+credential_types: [pat, oauth]
+identity_probe:
+  method: http_whoami
+  endpoint: https://api.github.com/user
+  auth_header: "Authorization: Bearer {secret}"
+  identity_field: login
+  scopes_header: X-OAuth-Scopes
+access_levels:
+  read-only:
+    pat_scopes: ["repo:status", "read:org"]
+  read-write:
+    pat_scopes: ["repo", "workflow"]
+exec_env: GH_TOKEN
