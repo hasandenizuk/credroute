@@ -103,7 +103,7 @@ rules:
 vault:
   backend: age
   age:
-    store_dir: ~/Projects/shared/secrets
+    store_dir: ~/vault
     identity_file: ~/.config/credroute/age-identity.txt
 
 # Optional thin store (D1), commented out by default.

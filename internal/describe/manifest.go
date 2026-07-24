@@ -108,13 +108,13 @@ var manifest = []Command{
 		Params: []Param{
 			{Name: "yes", Kind: "flag", Type: "bool", Description: "non-interactive: scaffold from flags/env only, never prompt (required when stdin is not a terminal)"},
 			{Name: "force", Kind: "flag", Type: "bool", Description: "overwrite an existing config file"},
-			{Name: "vault-dir", Kind: "flag", Type: "string", Default: "~/Projects/shared/secrets", Description: "vault.age.store_dir"},
+			{Name: "vault-dir", Kind: "flag", Type: "string", Default: "~/vault", Description: "vault.age.store_dir"},
 			{Name: "identity-file", Kind: "flag", Type: "string", Default: "~/.config/credroute/age-identity.txt", Description: "vault.age.identity_file"},
 			{Name: "identity", Kind: "flag", Type: "string", Description: "optional: scaffold one identity, keyed by this id (usually an email)"},
 			{Name: "identity-label", Kind: "flag", Type: "string", Description: "label for --identity"},
 			{Name: "path", Kind: "positional", Type: "string", Description: "config file path (default: the usual resolution)"},
 		},
-		Examples: []string{"credroute init --yes --vault-dir ~/Projects/shared/secrets"},
+		Examples: []string{"credroute init --yes --vault-dir ~/vault"},
 		ExitCodes: map[string]string{
 			"0": "wrote the config skeleton",
 			"1": "usage error, or stdin is not a terminal without --yes, or the config already exists without --force",

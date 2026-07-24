@@ -45,7 +45,7 @@ rules:
 vault:
   backend: age
   age:
-    store_dir: ~/Projects/shared/secrets
+    store_dir: ~/vault
     identity_file: ~/.config/credroute/age-identity.txt
 `
 

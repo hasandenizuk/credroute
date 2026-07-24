@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	defaultVaultDir     = "~/Projects/shared/secrets"
+	defaultVaultDir     = "~/vault"
 	defaultIdentityFile = "~/.config/credroute/age-identity.txt"
 )
 

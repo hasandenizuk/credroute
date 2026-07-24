@@ -181,7 +181,7 @@ rules:
 vault:
   backend: age
   age:
-    store_dir: ~/Projects/shared/secrets    # existing vault; credroute only reads
+    store_dir: ~/vault    # existing vault; credroute only reads
     identity_file: ~/.config/credroute/age-identity.txt   # NOT synced (machine-local)
 
 # Optional thin store (D1), commented out by default.
