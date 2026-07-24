@@ -2,7 +2,7 @@
 
 **A credential router for AI coding agents.** It answers one question, correctly, every time: for *this* client, *this* project, *this* task, on *this* platform, which identity should the agent use, at what access level? Then it checks the identity is really what it claims to be before handing it over.
 
-> Status: pre-release. The design is complete and documented. The Go build is in progress. See [the roadmap](docs/roadmap.md).
+> Status: pre-release, but installable and working today. `init`, `resolve`, `verify`, `doctor`, identity/route/store management, and the adapter installers are built and tested (see [Install](#install) below). See [the roadmap](docs/roadmap.md) for what is still ahead.
 
 ---
 
@@ -40,6 +40,152 @@ credroute does not want to be your secret store. Your secrets stay in the vault 
 ## Works with your agent
 
 The core is a single standalone binary. Each AI harness gets a thin adapter that just calls it. The first release targets **Claude Code**, **Codex**, and **Gemini / antigravity**. Adding another later is a small adapter, not a rewrite.
+
+## Install
+
+credroute is a single static binary plus one runtime dependency: [`age`](https://github.com/FiloSottile/age) must be on PATH, because credroute shells out to it for every vault read and write instead of reimplementing encryption. Tested against age 1.1.1.
+
+**Option 1: `go install`** (needs Go 1.26 or newer):
+
+```
+go install github.com/hasandenizuk/credroute/cmd/credroute@latest
+```
+
+This installs to `$(go env GOPATH)/bin`. Make sure that directory is on PATH.
+
+**Option 2: download a prebuilt binary** (no Go needed):
+
+Grab the tarball for your platform from the [latest release](https://github.com/hasandenizuk/credroute/releases/latest). Builds cover `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` (no Windows build yet: one internal package uses a file-lock syscall Windows does not have). Check the sha256 against the release's `checksums.txt`, then:
+
+```
+tar -xzf credroute_<version>_<os>_<arch>.tar.gz
+sudo mv credroute_<version>_<os>_<arch>/credroute /usr/local/bin/
+```
+
+**Option 3: build from source** (to read the code before you trust it):
+
+```
+git clone https://github.com/hasandenizuk/credroute.git
+cd credroute
+go build -o credroute ./cmd/credroute
+```
+
+Confirm it works:
+
+```
+$ credroute version
+credroute 0.1.0-milestone1 (commit unknown, go1.26.3)
+```
+
+## Quickstart
+
+This walks through a first identity, a first routing rule, and a first `resolve`, using a placeholder identity and a fake GitHub token. Swap in your own client, identity, and platform once you see the shape of it.
+
+**1. Scaffold a config and a vault directory.**
+
+```
+mkdir -p ~/vault
+credroute init --yes --vault-dir ~/vault
+```
+
+This writes `~/.config/credroute/config.yaml` with an empty rule set and prepares credroute's own machine key. It does not touch your secrets or generate an age key for you: that is step 2.
+
+**2. Generate an age key, if you do not already have one.**
+
+```
+age-keygen -o ~/.config/credroute/age-identity.txt
+```
+
+Note the "Public key: age1..." line it prints; you need it for step 4.
+
+**3. Add an identity and point it at a vault entry.**
+
+```
+credroute identity add alex@example.com --label "Alex personal"
+credroute identity edit alex@example.com \
+  --add-credential "github:read-only:pat:age://github/alex/token.age"
+```
+
+Credential types are `oauth`, `api_key`, `bearer_token`, `pat`. The `vault-handle` here (`age://github/alex/token.age`) is a path relative to the vault dir you gave `init`, resolved by credroute's own age backend, not a URL it fetches.
+
+**4. Encrypt the actual secret to that path.**
+
+credroute does not write your secrets for you when you route to an existing vault entry (that is the point: route, do not store). Encrypt it yourself with age, to your own public key from step 2:
+
+```
+mkdir -p ~/vault/github/alex
+echo -n "ghp_your_real_token" | age -r age1yourpublickeyfromstep2 -o ~/vault/github/alex/token.age
+```
+
+**5. Add a routing rule.**
+
+```
+credroute route add github-default --platform github --identity alex@example.com --access read-only
+```
+
+`--client` and `--dir` are also available to scope a rule to one client folder; a bare `--platform` match is enough to get started. Note that there is currently no `credroute client add` command: client-scoped rules (`--client acme`) require an `acme:` entry to already exist under `clients:` in `config.yaml`, which you add by hand.
+
+**6. Ask credroute for the credential.**
+
+```
+$ credroute resolve --platform github
+{
+  "status": "mismatch",
+  ...
+  "verification": { "status": "unverified", "identity_confirmed": false },
+  "detail": "verification status \"unverified\" under verify=required; refusing (run `credroute verify --platform github` to re-attest)"
+}
+$ echo $?
+3
+```
+
+This refusal is the point of the tool, not a bug in the quickstart: the default `verify: required` mode means credroute will not hand over a credential until it has actually probed the account sitting in that slot and confirmed it matches. To clear it for real, run:
+
+```
+credroute verify --platform github
+```
+
+This performs a live check against the actual platform (it needs network access and a real token) and records the result. Once it reports `"status": "verified"`, `resolve` returns `"status": "ok"`.
+
+To try the rest of this walkthrough offline, without a live token, loosen just this one rule instead of the whole config:
+
+```
+$ credroute route assign github-default --verify advisory
+$ credroute resolve --platform github
+{
+  "status": "ok",
+  "identity": "alex@example.com",
+  "access_level": "read-only",
+  "verification": { "status": "unverified", "identity_confirmed": false },
+  ...
+}
+```
+
+`advisory` reports the unverified status instead of refusing on it. Set it back to `required` (`credroute route assign github-default --verify required`) once you have run a real `credroute verify`.
+
+**7. Check the environment.**
+
+```
+$ credroute doctor
+[OK  ] config parses                ~/.config/credroute/config.yaml
+[OK  ] config validates             0 warning(s)
+[OK  ] vault backend supported      age
+[OK  ] vault store_dir exists       ~/vault
+[OK  ] age identity_file readable   ~/.config/credroute/age-identity.txt
+[OK  ] age binary on PATH           /usr/bin/age
+[OK  ] attestation sidecars         none recorded yet
+[OK  ] sync-conflict files          none found
+```
+
+**8. Wire it into your agent harness.**
+
+```
+credroute adapter install claude-code
+```
+
+This writes a skill (`~/.claude/skills/credroute/SKILL.md`) and a PreToolUse hook (`~/.claude/hooks/credroute-resolve-hook.sh`) that call credroute automatically. `credroute adapter install codex` and `credroute adapter install agy` do the same for those harnesses. Add `--dry-run` first if you want to see the file list before anything is written, and `--dir <path>` to install somewhere other than the harness's usual location.
+
+From here: `credroute explain --platform github --all` traces which rule matched and why (or why each one missed), and `credroute --help` lists every command and every global flag (`--config`, `--json`, `--quiet`, `-v`).
 
 ## Documentation
 
