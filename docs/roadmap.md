@@ -148,6 +148,9 @@ P4 (starts after P0, finishes any time before P6)
 
 ## 4. Post-v1 / future
 
+- **Agent-native command layer (NEXT milestone).** Two halves that ship together.
+  1. *Imperative commands* so users and agents never hand-write YAML: `identity add` / `identity edit`, `route add` / `route assign` / `route ls`, and the deferred `store add` / `store ls` / `store remove`. Every write validates the result (runs the `config validate` checks) before saving, preserves comments where possible, and handles secrets only through the vault backend. Additive over the resolver; no data-model change.
+  2. *Self-description / discovery* so an LLM learns the interface at runtime instead of guessing. A `credroute describe [--json] [<command>]` emits a machine-readable manifest of every command: purpose, parameters (name, type, required, allowed values, description), examples, and exit-code semantics. Intended flow: the agent asks the tool what commands exist and how to call them, then invokes the right one with the right parameters. The binary is the single source of truth for its own interface, so harness adapters and skills are generated from `describe` output and can never drift from the actual commands. This is what makes the imperative layer usable by an agent, not just a human.
 - **Rotation** (the explicit v1 non-goal): key rotation and quota-aware rotation across a pool of identities; the handle indirection was designed so rotation changes vault contents, never rules.
 - **Teams:** shared config repos, per-person age recipients, identity ownership metadata; the file-based model was chosen so this is additive.
 - **More vaults:** SOPS and Bitwarden backends as the first community-contribution targets; the 5-method interface is the contract.
