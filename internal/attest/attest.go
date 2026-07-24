@@ -23,6 +23,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/hasandenizuk/credroute/internal/fsutil"
 )
 
 // Status is the observed outcome recorded for one attestation. Spec 5.2:
@@ -227,48 +229,6 @@ func computeHMAC(rec Record, key []byte) (string, error) {
 	return "b64:" + base64.StdEncoding.EncodeToString(mac.Sum(nil)), nil
 }
 
-// writeFileAtomic writes b to path atomically: a uniquely-named temp file
-// in the same directory (never a fixed "path+.tmp" name, so two
-// concurrent writers can never collide on it, closing F14), fsynced before
-// rename so the write survives a crash between write and rename, then
-// renamed into place. The temp file is always cleaned up on any failure
-// path.
-func writeFileAtomic(path string, b []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("create temp file in %s: %w", dir, err)
-	}
-	tmpPath := tmp.Name()
-	ok := false
-	defer func() {
-		if !ok {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod temp file %s: %w", tmpPath, err)
-	}
-	if _, err := tmp.Write(b); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write temp file %s: %w", tmpPath, err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("fsync temp file %s: %w", tmpPath, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp file %s: %w", tmpPath, err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("rename %s to %s: %w", tmpPath, path, err)
-	}
-	ok = true
-	return nil
-}
-
 // Write records rec to its sidecar, computing and attaching the HMAC.
 // Version defaults to 1 and CheckedAt defaults to now if unset. This is
 // the single write path; every caller that observes a slot (verify,
@@ -305,7 +265,7 @@ func Write(rec *Record) error {
 		return fmt.Errorf("attest: marshal sidecar: %w", err)
 	}
 
-	if err := writeFileAtomic(path, b, 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(path, b, 0o600); err != nil {
 		return fmt.Errorf("attest: write sidecar: %w", err)
 	}
 
@@ -314,7 +274,7 @@ func Write(rec *Record) error {
 	// never fatal: the state-dir copy above is the record of truth.
 	if rec.Slot != "" {
 		if info, statErr := os.Stat(rec.Slot); statErr == nil && info.IsDir() {
-			_ = writeFileAtomic(filepath.Join(rec.Slot, ".credroute-attest.json"), b, 0o600)
+			_ = fsutil.WriteFileAtomic(filepath.Join(rec.Slot, ".credroute-attest.json"), b, 0o600)
 		}
 	}
 	return nil

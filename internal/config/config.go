@@ -57,13 +57,17 @@ type Client struct {
 // Identity is one entry under identities{}: a real account, keyed by its
 // map key (usually an email) in the parent Config.Identities map.
 type Identity struct {
-	Label     string              `yaml:"label"`
-	Platforms map[string]Platform `yaml:"platforms"`
+	Label string `yaml:"label"`
+	// Platforms is omitempty so `identity add` can create an identity with
+	// no platforms yet (added afterwards via `identity edit
+	// --add-credential`) without rendering a stray "platforms: {}".
+	Platforms map[string]Platform `yaml:"platforms,omitempty"`
 }
 
 // Platform is one entry under identities.<id>.platforms{}.
 type Platform struct {
-	Credentials map[string]Credential `yaml:"credentials"`
+	// Credentials is omitempty for the same reason as Identity.Platforms.
+	Credentials map[string]Credential `yaml:"credentials,omitempty"`
 }
 
 // Credential is one entry under platforms.<name>.credentials{}, keyed by
