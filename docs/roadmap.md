@@ -29,7 +29,7 @@ The suggested P0-P6 spine from the brief is kept, with one adjustment, justified
 
 **Deliverables:**
 - `vault.Backend` interface + registry exactly as spec section 7.1; `Secret` type with `WithBytes`/`Zero`.
-- age backend over `filippo.io/age` (library, no shell-out), reading the maintainer's existing per-file vault layout.
+- age backend that shells out to the `age` binary, reading an existing per-file vault layout. Shipped this way to hold the one-dependency policy; the library remains an option if shelling out becomes a constraint.
 - `credroute exec -- <cmd>`: resolve, retrieve, env-inject (`exec_env` placeholder until P3 profiles; interim: per-credential `env:` config key), run, zero, propagate exit code.
 - `credroute handle get` with `--to-fd` / `--to-file` and the TTY-gated `--reveal-unsafe`.
 - Optional thin store (`store://` backend, `store add/ls/rm`) behind `store.enabled` - it is the age backend plus `CanStore`, so the marginal cost is small and doing it now proves the interface has two implementations.

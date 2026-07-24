@@ -8,9 +8,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -19,6 +24,28 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      # A tag does not trigger CI, so the same gate runs here. Without this
+      # a release could be cut from a commit that never passed anything.
+      - name: Install age
+        run: sudo apt-get update && sudo apt-get install -y age
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Check gofmt
+        run: |
+          fmt_out="$(gofmt -l .)"
+          if [ -n "$fmt_out" ]; then
+            echo "The following files are not gofmt-clean:"
+            echo "$fmt_out"
+            exit 1
+          fi
+
+      - name: Test
+        env:
+          CREDROUTE_NO_NETWORK: "1"
+        run: go test ./... -count=1
 
       # Windows is deliberately not built: internal/config/editor.go takes
       # an exclusive lock via syscall.Flock, which does not exist on
