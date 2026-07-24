@@ -41,14 +41,14 @@ func TestClassifyForResolve(t *testing.T) {
 	maxAge := 24 * time.Hour
 
 	t.Run("no sidecar is unverified", func(t *testing.T) {
-		got := ClassifyForResolve(nil, attest.ErrNotFound, maxAge, now)
+		got := ClassifyForResolve(nil, attest.ErrNotFound, maxAge, now, "")
 		if got != ResolveUnverified {
 			t.Fatalf("got %q, want %q", got, ResolveUnverified)
 		}
 	})
 
 	t.Run("tampered sidecar is unverified", func(t *testing.T) {
-		got := ClassifyForResolve(nil, attest.ErrTampered, maxAge, now)
+		got := ClassifyForResolve(nil, attest.ErrTampered, maxAge, now, "")
 		if got != ResolveUnverified {
 			t.Fatalf("got %q, want %q", got, ResolveUnverified)
 		}
@@ -56,7 +56,7 @@ func TestClassifyForResolve(t *testing.T) {
 
 	t.Run("fresh verified stays verified", func(t *testing.T) {
 		rec := &attest.Record{Status: attest.StatusVerified, CheckedAt: now.Add(-time.Hour)}
-		got := ClassifyForResolve(rec, nil, maxAge, now)
+		got := ClassifyForResolve(rec, nil, maxAge, now, "")
 		if got != ResolveVerified {
 			t.Fatalf("got %q, want %q", got, ResolveVerified)
 		}
@@ -64,7 +64,7 @@ func TestClassifyForResolve(t *testing.T) {
 
 	t.Run("old verified becomes stale", func(t *testing.T) {
 		rec := &attest.Record{Status: attest.StatusVerified, CheckedAt: now.Add(-48 * time.Hour)}
-		got := ClassifyForResolve(rec, nil, maxAge, now)
+		got := ClassifyForResolve(rec, nil, maxAge, now, "")
 		if got != ResolveStale {
 			t.Fatalf("got %q, want %q", got, ResolveStale)
 		}
@@ -72,7 +72,7 @@ func TestClassifyForResolve(t *testing.T) {
 
 	t.Run("maxAge zero disables staleness", func(t *testing.T) {
 		rec := &attest.Record{Status: attest.StatusVerified, CheckedAt: now.Add(-1000 * time.Hour)}
-		got := ClassifyForResolve(rec, nil, 0, now)
+		got := ClassifyForResolve(rec, nil, 0, now, "")
 		if got != ResolveVerified {
 			t.Fatalf("got %q, want %q", got, ResolveVerified)
 		}
@@ -80,7 +80,7 @@ func TestClassifyForResolve(t *testing.T) {
 
 	t.Run("mismatch stays mismatch regardless of age", func(t *testing.T) {
 		rec := &attest.Record{Status: attest.StatusMismatch, CheckedAt: now.Add(-1000 * time.Hour)}
-		got := ClassifyForResolve(rec, nil, maxAge, now)
+		got := ClassifyForResolve(rec, nil, maxAge, now, "")
 		if got != ResolveMismatch {
 			t.Fatalf("got %q, want %q", got, ResolveMismatch)
 		}
@@ -88,7 +88,7 @@ func TestClassifyForResolve(t *testing.T) {
 
 	t.Run("unreadable status maps to unverified", func(t *testing.T) {
 		rec := &attest.Record{Status: attest.StatusUnreadable, CheckedAt: now}
-		got := ClassifyForResolve(rec, nil, maxAge, now)
+		got := ClassifyForResolve(rec, nil, maxAge, now, "")
 		if got != ResolveUnverified {
 			t.Fatalf("got %q, want %q", got, ResolveUnverified)
 		}
@@ -96,9 +96,29 @@ func TestClassifyForResolve(t *testing.T) {
 
 	t.Run("unconfirmed status maps to unconfirmed, distinct from verified", func(t *testing.T) {
 		rec := &attest.Record{Status: attest.StatusUnconfirmed, CheckedAt: now}
-		got := ClassifyForResolve(rec, nil, maxAge, now)
+		got := ClassifyForResolve(rec, nil, maxAge, now, "")
 		if got != ResolveUnconfirmed {
 			t.Fatalf("got %q, want %q", got, ResolveUnconfirmed)
+		}
+	})
+
+	// H2 (Fable 5 review v2): sidecars for slot-carrying credentials are
+	// keyed by slot only, so a fresh "verified" sidecar earned by one
+	// vault handle must not be readable as endorsing a DIFFERENT handle
+	// now sitting behind the same slot.
+	t.Run("verified sidecar for a re-pointed vault handle reads as unverified", func(t *testing.T) {
+		rec := &attest.Record{Status: attest.StatusVerified, CheckedAt: now, VaultHandle: "age://old-handle.age"}
+		got := ClassifyForResolve(rec, nil, maxAge, now, "age://new-handle.age")
+		if got != ResolveUnverified {
+			t.Fatalf("got %q, want %q (handle mismatch must not read as verified)", got, ResolveUnverified)
+		}
+	})
+
+	t.Run("verified sidecar for the same current vault handle still verifies", func(t *testing.T) {
+		rec := &attest.Record{Status: attest.StatusVerified, CheckedAt: now, VaultHandle: "age://same-handle.age"}
+		got := ClassifyForResolve(rec, nil, maxAge, now, "age://same-handle.age")
+		if got != ResolveVerified {
+			t.Fatalf("got %q, want %q", got, ResolveVerified)
 		}
 	})
 }

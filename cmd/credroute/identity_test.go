@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/hasandenizuk/credroute/internal/audit"
 )
 
 const identityTestConfigYAML = `version: 1
@@ -20,6 +22,10 @@ vault:
 `
 
 func TestCmdIdentityAdd_AndEdit(t *testing.T) {
+	// M2 (Fable 5 review v2): identity add/edit now append an audit
+	// entry on success, so every test that succeeds must sandbox the
+	// state dir rather than writing to the real machine's audit.jsonl.
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
 	path := writeTestConfig(t, identityTestConfigYAML)
 
 	if code := cmdIdentityAdd([]string{"--config", path, "--label", "Alex personal", "alex@example.com"}); code != 0 {
@@ -47,6 +53,7 @@ func TestCmdIdentityAdd_AndEdit(t *testing.T) {
 }
 
 func TestCmdIdentityAdd_Duplicate(t *testing.T) {
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
 	path := writeTestConfig(t, identityTestConfigYAML)
 	if code := cmdIdentityAdd([]string{"--config", path, "alex@example.com"}); code != 0 {
 		t.Fatalf("first add exit = %d, want 0", code)
@@ -57,6 +64,7 @@ func TestCmdIdentityAdd_Duplicate(t *testing.T) {
 }
 
 func TestCmdIdentityEdit_UnknownIdentity(t *testing.T) {
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
 	path := writeTestConfig(t, identityTestConfigYAML)
 	code := cmdIdentityEdit([]string{"--config", path, "--label", "x", "nobody@example.com"})
 	if code == 0 {
@@ -65,12 +73,49 @@ func TestCmdIdentityEdit_UnknownIdentity(t *testing.T) {
 }
 
 func TestCmdIdentityEdit_NothingToDo(t *testing.T) {
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
 	path := writeTestConfig(t, identityTestConfigYAML)
 	if code := cmdIdentityAdd([]string{"--config", path, "alex@example.com"}); code != 0 {
 		t.Fatal("setup add failed")
 	}
 	if code := cmdIdentityEdit([]string{"--config", path, "alex@example.com"}); code != 1 {
 		t.Errorf("identity edit with no flags exit = %d, want 1", code)
+	}
+}
+
+// TestCmdIdentityAdd_AppendsAuditEntry guards M2 (Fable 5 review v2):
+// identity/route/store mutations previously left no audit trail at all,
+// so the routing table itself could be rewritten with zero record of
+// who changed what.
+func TestCmdIdentityAdd_AppendsAuditEntry(t *testing.T) {
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
+	path := writeTestConfig(t, identityTestConfigYAML)
+
+	if code := cmdIdentityAdd([]string{"--config", path, "--label", "Alex personal", "alex@example.com"}); code != 0 {
+		t.Fatalf("identity add exit = %d, want 0", code)
+	}
+
+	entries, err := audit.ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *audit.Entry
+	for i := range entries {
+		if entries[i].Op == "config" && entries[i].Command == "identity add" {
+			found = &entries[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("no audit entry for the successful identity add, got: %+v", entries)
+	}
+	if found.Target != "alex@example.com" {
+		t.Errorf("audit entry Target = %q, want %q", found.Target, "alex@example.com")
+	}
+	if found.ConfigPath != path {
+		t.Errorf("audit entry ConfigPath = %q, want %q", found.ConfigPath, path)
+	}
+	if found.Decision != "allow" {
+		t.Errorf("audit entry Decision = %q, want %q", found.Decision, "allow")
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/hasandenizuk/credroute/internal/attest"
 	"github.com/hasandenizuk/credroute/internal/config"
+	"github.com/hasandenizuk/credroute/internal/fsutil"
 )
 
 const (
@@ -42,19 +43,28 @@ func cmdInit(args []string) int {
 		return 1
 	}
 
+	// H1 (Fable 5 review v2): a positional path argument and --config used
+	// to silently conflict (the positional silently won), and an empty
+	// path resolved via config.DefaultPath() alone, skipping
+	// $CREDROUTE_CONFIG entirely — the one command out of step with every
+	// other command's resolution precedence. Both are fixed here: a
+	// flag/positional conflict is now a hard error, and the empty case
+	// goes through the same config.ResolvedPath used by Load/OpenDocument
+	// (--config flag > $CREDROUTE_CONFIG > DefaultPath()).
+	if g.configPath != "" && fs.NArg() > 0 {
+		fmt.Fprintln(os.Stderr, "credroute init: both --config and a positional path were given; pass only one")
+		return 1
+	}
 	path := g.configPath
 	if fs.NArg() > 0 {
 		path = fs.Arg(0)
 	}
-	if path == "" {
-		p, err := config.DefaultPath()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "credroute init:", err)
-			return 1
-		}
-		path = p
+	resolved, err := config.ResolvedPath(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "credroute init:", err)
+		return 1
 	}
-	expandedPath, err := config.ExpandHome(path)
+	expandedPath, err := config.ExpandHome(resolved)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "credroute init:", err)
 		return 1
@@ -161,7 +171,11 @@ func writeConfigSkeleton(path string, cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	if err := os.WriteFile(path, b, 0o600); err != nil {
+	// L6 (Fable 5 review v2): now that config.yaml is the substrate every
+	// identity/route/store command edits, a crash mid-write (including on
+	// --force over an existing config) must not leave a truncated file.
+	// Use the same fsync+rename helper the rest of the milestone does.
+	if err := fsutil.WriteFileAtomic(path, b, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil

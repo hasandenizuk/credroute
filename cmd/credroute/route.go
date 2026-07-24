@@ -73,7 +73,7 @@ func cmdRouteAdd(args []string) int {
 		},
 	}
 
-	return withConfigEdit(g, "route add", func(doc *config.Document) error {
+	return withConfigEdit(g, "route add", id, func(doc *config.Document) error {
 		return doc.AddRule(rule, *index)
 	})
 }
@@ -113,7 +113,7 @@ func cmdRouteAssign(args []string) int {
 		return 1
 	}
 
-	return withConfigEdit(g, "route assign", func(doc *config.Document) error {
+	return withConfigEdit(g, "route assign", ruleID, func(doc *config.Document) error {
 		return doc.AssignRule(ruleID, setIdentity, setAccess, setVerify)
 	})
 }

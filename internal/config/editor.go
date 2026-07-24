@@ -20,9 +20,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"syscall"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/hasandenizuk/credroute/internal/attest"
 	"github.com/hasandenizuk/credroute/internal/fsutil"
 )
 
@@ -30,6 +32,34 @@ import (
 type Document struct {
 	Path string
 	root yaml.Node // Kind == yaml.DocumentNode
+
+	// lockFile holds the advisory lock acquired by OpenDocument, released
+	// by Close. nil once released (or if OpenDocument never acquired one,
+	// which does not happen in current callers but keeps Close safe).
+	lockFile *os.File
+}
+
+// lockPath returns the advisory-lock file path for a config, adjacent to
+// the config file itself.
+func lockPath(path string) string { return path + ".lock" }
+
+// acquireLock opens (creating if needed) and flocks path's lock file
+// exclusively, blocking until acquired (M1, Fable 5 review v2): two
+// concurrent editors of the same config now serialize on this lock
+// instead of the second process's atomic rename silently discarding the
+// first process's already-saved edit. The returned file must be closed
+// (which also releases the flock, per flock(2) semantics) once the edit
+// is finished, success or failure alike; see Document.Close.
+func acquireLock(path string) (*os.File, error) {
+	f, err := os.OpenFile(lockPath(path), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("config: open lock file for %s: %w", path, err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("config: acquire lock for %s: %w", path, err)
+	}
+	return f, nil
 }
 
 // OpenDocument reads the config at path (same resolution precedence as
@@ -37,6 +67,12 @@ type Document struct {
 // editable node tree. The file must already exist and parse as a YAML
 // mapping document; OpenDocument does not create one (that is
 // `credroute init`'s job).
+//
+// OpenDocument acquires an exclusive advisory lock on the config before
+// reading it (see acquireLock) and holds it until the returned Document's
+// Close is called. Callers must defer Close immediately after a
+// successful OpenDocument so the lock is released on every exit path,
+// including a mutate or validation failure that never reaches Save.
 func OpenDocument(path string) (*Document, error) {
 	resolved, err := resolvedPath(path)
 	if err != nil {
@@ -46,20 +82,40 @@ func OpenDocument(path string) (*Document, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	lockFile, err := acquireLock(expanded)
+	if err != nil {
+		return nil, err
+	}
+
 	b, err := os.ReadFile(expanded)
 	if err != nil {
+		_ = lockFile.Close()
 		return nil, fmt.Errorf("open config %s: %w", expanded, err)
 	}
 
 	var root yaml.Node
 	if err := yaml.Unmarshal(b, &root); err != nil {
+		_ = lockFile.Close()
 		return nil, fmt.Errorf("parse config %s: %w", expanded, err)
 	}
 	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 || root.Content[0].Kind != yaml.MappingNode {
+		_ = lockFile.Close()
 		return nil, fmt.Errorf("config %s: expected a YAML mapping document at the top level", expanded)
 	}
 
-	return &Document{Path: expanded, root: root}, nil
+	return &Document{Path: expanded, root: root, lockFile: lockFile}, nil
+}
+
+// Close releases the advisory lock OpenDocument acquired. Safe to call
+// more than once (a no-op after the first call).
+func (d *Document) Close() error {
+	if d.lockFile == nil {
+		return nil
+	}
+	err := d.lockFile.Close()
+	d.lockFile = nil
+	return err
 }
 
 // Snapshot re-decodes the document's current in-memory state into a
@@ -253,6 +309,20 @@ func (d *Document) UpsertCredential(id, platform, access string, cred Credential
 		return err
 	}
 	if existing := findMapEntry(creds, access); existing != nil {
+		// H2 (Fable 5 review v2), defense in depth: if this replaces a
+		// credential with a different slot or vault handle, any sidecar
+		// attestation on file was earned by the OLD slot/handle pair and
+		// must not silently endorse the new one. ClassifyForResolve
+		// already refuses to trust a sidecar whose recorded handle
+		// disagrees with the credential's current handle, but invalidate
+		// it here too rather than leaving a now-meaningless sidecar
+		// sitting on disk until it next fails that comparison.
+		var old Credential
+		if decErr := existing.Decode(&old); decErr == nil && (old.Slot != cred.Slot || old.Vault != cred.Vault) {
+			if invErr := attest.Invalidate(old.Slot, old.Vault); invErr != nil {
+				return fmt.Errorf("invalidate stale attestation for %s/%s/%s: %w", id, platform, access, invErr)
+			}
+		}
 		replaceValue(existing, newVal)
 		return nil
 	}
@@ -299,18 +369,31 @@ func (d *Document) AddRule(rule Rule, index int) error {
 	}
 
 	n := len(rules.Content)
+	catchAllPos := -1
+	if n > 0 && ruleNodeIsCatchAll(rules.Content[n-1]) {
+		catchAllPos = n - 1
+	}
+
 	pos := index
 	if pos < 0 {
 		pos = n
-		if n > 0 && ruleNodeIsCatchAll(rules.Content[n-1]) {
-			pos = n - 1
-		}
 	}
 	if pos > n {
 		pos = n
 	}
 	if pos < 0 {
 		pos = 0
+	}
+	// A trailing catch-all rule is only ever legal as the final rule
+	// (config.Validate enforces this). This clamp applies to BOTH the
+	// smart default above (index < 0) and an explicit --index that names
+	// a position at or after the catch-all (L4, Fable 5 review v2): an
+	// explicit index used to skip the clamp entirely, so a request that
+	// only meant "append" landed after the catch-all and was refused at
+	// validate time with a confusing error, even though it was always
+	// safe to just insert before the catch-all instead.
+	if catchAllPos >= 0 && pos > catchAllPos {
+		pos = catchAllPos
 	}
 
 	rules.Content = append(rules.Content, nil)

@@ -49,7 +49,7 @@ func runVerifyPrecheck(cliFlag, ruleVerify, defaultsVerify, sidecarMaxAge, slot,
 		}
 	}
 	rec, readErr := attest.Read(slot, vaultHandle)
-	status := verify.ClassifyForResolve(rec, readErr, maxAge, time.Now().UTC())
+	status := verify.ClassifyForResolve(rec, readErr, maxAge, time.Now().UTC(), vaultHandle)
 	return verifyPrecheck{Mode: mode, Status: status}
 }
 

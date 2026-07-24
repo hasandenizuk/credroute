@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/hasandenizuk/credroute/internal/audit"
 	"github.com/hasandenizuk/credroute/internal/config"
 )
 
@@ -28,8 +29,10 @@ import (
 //  5. Saves atomically and reports what happened.
 //
 // commandName is used only to prefix error/status messages (e.g.
-// "identity add", "route assign").
-func withConfigEdit(g *globalFlags, commandName string, mutate func(*config.Document) error) int {
+// "identity add", "route assign"). target names the specific identity id
+// or rule id being changed, recorded on the audit entry logged for a
+// successful edit (M2, Fable 5 review v2).
+func withConfigEdit(g *globalFlags, commandName, target string, mutate func(*config.Document) error) int {
 	prefix := "credroute " + commandName
 
 	doc, err := config.OpenDocument(g.configPath)
@@ -37,6 +40,7 @@ func withConfigEdit(g *globalFlags, commandName string, mutate func(*config.Docu
 		fmt.Fprintf(os.Stderr, "%s: %v\n", prefix, err)
 		return 5
 	}
+	defer doc.Close()
 
 	before, err := doc.Snapshot()
 	if err != nil {
@@ -71,6 +75,19 @@ func withConfigEdit(g *globalFlags, commandName string, mutate func(*config.Docu
 		fmt.Fprintf(os.Stderr, "%s: %v\n", prefix, err)
 		return 1
 	}
+
+	// M2 (Fable 5 review v2): every successful config mutation gets one
+	// audit line, best-effort like every other audit.Append call site (a
+	// failure to write it never changes this command's own exit code).
+	_ = audit.Append(audit.Entry{
+		Op:         "config",
+		Command:    commandName,
+		Target:     target,
+		ConfigPath: doc.Path,
+		Exit:       0,
+		Decision:   "allow",
+		Caller:     auditCaller,
+	})
 
 	if !g.quiet {
 		fmt.Printf("%s: saved %s\n", prefix, doc.Path)

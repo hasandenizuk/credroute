@@ -280,6 +280,27 @@ func Write(rec *Record) error {
 	return nil
 }
 
+// Invalidate removes the sidecar for slot/vaultHandle (see KeyFor), if one
+// exists, plus its best-effort slot-mirror copy. Used when a credential's
+// slot or vault handle is being replaced by a config edit (H2, Fable 5
+// review v2, defense in depth alongside ClassifyForResolve's own current-
+// handle comparison): a "verified" attestation earned by the OLD
+// slot/handle pair must never be readable as endorsing whatever the SAME
+// key now resolves to. A missing sidecar is not an error.
+func Invalidate(slot, vaultHandle string) error {
+	path, err := SidecarPath(KeyFor(slot, vaultHandle))
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("attest: invalidate sidecar %s: %w", path, err)
+	}
+	if slot != "" {
+		_ = os.Remove(filepath.Join(slot, ".credroute-attest.json"))
+	}
+	return nil
+}
+
 // ReadPath reads and HMAC-verifies the sidecar at path directly. Doctor
 // uses this to scan every sidecar in AttestDir without needing to
 // reconstruct each one's key first.

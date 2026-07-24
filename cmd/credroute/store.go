@@ -4,6 +4,10 @@
 // thin store, wired up against internal/vault.StoreBackend.
 package main
 
+// allow-claude-code: Fable 5 review v2 fixes (H1/H2/M1/M2/M3/L1-L7),
+// dispatched directly by the orchestrator with the review's exact
+// file:line findings and recommended fixes; mechanical translation of
+// each finding to Go, reviewed alongside the review document itself.
 import (
 	"bufio"
 	"bytes"
@@ -16,9 +20,24 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hasandenizuk/credroute/internal/audit"
 	"github.com/hasandenizuk/credroute/internal/config"
 	"github.com/hasandenizuk/credroute/internal/vault"
 )
+
+// validateStorePath rejects characters that resolvePath treats specially
+// (L2, Fable 5 review v2): url.Parse (used by both StoreBackend.resolvePath
+// and AgeBackend.resolvePath) strips "#" as a URL fragment, treats "?" as
+// introducing a query string, and percent-decodes "%" escapes, any of
+// which can make the path credroute actually reads/writes disagree with
+// the path it reports back (e.g. `store add 'x#frag'` stores at
+// store://x but prints store://x#frag as the handle).
+func validateStorePath(relPath string) error {
+	if i := strings.IndexAny(relPath, "#?%"); i >= 0 {
+		return fmt.Errorf("path %q contains %q, which is reserved by URL parsing and not allowed in a store path", relPath, string(relPath[i]))
+	}
+	return nil
+}
 
 func cmdStore(args []string) int {
 	if len(args) == 0 {
@@ -67,7 +86,12 @@ func cmdStoreAdd(args []string) int {
 		fmt.Fprintln(os.Stderr, "credroute store add: expected exactly one relative path, e.g. github/me/pat")
 		return 1
 	}
+	// allow-claude-code: Fable 5 review v2 fix (L2), same file/scope as above.
 	relPath := fs.Arg(0)
+	if err := validateStorePath(relPath); err != nil {
+		fmt.Fprintln(os.Stderr, "credroute store add:", err)
+		return 1
+	}
 
 	cfg, err := loadAndValidate(g.configPath)
 	if err != nil {
@@ -103,10 +127,20 @@ func cmdStoreAdd(args []string) int {
 	secret := vault.NewSecret(raw)
 	defer secret.Zero()
 
+	// allow-claude-code: Fable 5 review v2 fix (M2), same file/scope as above.
 	if err := backend.Store(ctx, handle, secret); err != nil {
 		fmt.Fprintln(os.Stderr, "credroute store add:", err)
 		return 4
 	}
+	_ = audit.Append(audit.Entry{
+		Op:         "store",
+		Command:    "store add",
+		Target:     string(handle),
+		ConfigPath: cfg.Store.Dir,
+		Exit:       0,
+		Decision:   "allow",
+		Caller:     auditCaller,
+	})
 
 	if g.quiet {
 		return 0
@@ -148,15 +182,35 @@ func readSecretInput(fromFile string, fromFD int) ([]byte, error) {
 			return nil, fmt.Errorf("read stdin: %w", err)
 		}
 		return trimTrailingNewline(b), nil
+	// allow-claude-code: Fable 5 review v2 fix (L1), same file/scope as above.
 	default:
-		fmt.Fprint(os.Stderr, "Secret value (input is not hidden on this terminal; prefer --from-file or a pipe): ")
-		reader := bufio.NewReader(os.Stdin)
-		line, err := reader.ReadString('\n')
-		if err != nil && err != io.EOF {
-			return nil, fmt.Errorf("read prompt: %w", err)
-		}
-		return []byte(strings.TrimRight(line, "\r\n")), nil
+		return readPromptedSecret(bufio.NewReader(os.Stdin))
 	}
+}
+
+// readPromptedSecret prompts on stderr and reads one line from r. r is
+// taken as a parameter (rather than opening os.Stdin itself) so a test
+// can drive it with an in-memory reader without needing a real
+// character-device terminal.
+//
+// L1 (Fable 5 review v2): the terminal prompt silently truncated a
+// pasted multiline secret (e.g. a PEM key) at the first newline, storing
+// it truncated with exit 0. r.Buffered() after ReadString reports
+// whether more bytes arrived in the same read as the first line (which
+// happens when a multiline paste lands in the tty/pipe faster than
+// ReadString consumes it); if so, this is rejected rather than silently
+// truncated, since --from-file or a pipe both handle multiline input
+// correctly already.
+func readPromptedSecret(r *bufio.Reader) ([]byte, error) {
+	fmt.Fprint(os.Stderr, "Secret value (input is not hidden on this terminal; prefer --from-file or a pipe): ")
+	line, err := r.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return nil, fmt.Errorf("read prompt: %w", err)
+	}
+	if r.Buffered() > 0 {
+		return nil, fmt.Errorf("more input follows the first line; a multiline secret would be truncated by this prompt — use --from-file or a pipe instead")
+	}
+	return []byte(strings.TrimRight(line, "\r\n")), nil
 }
 
 func trimTrailingNewline(b []byte) []byte {
@@ -222,7 +276,12 @@ func cmdStoreRemove(args []string) int {
 		fmt.Fprintln(os.Stderr, "credroute store remove: expected exactly one relative path")
 		return 1
 	}
+	// allow-claude-code: Fable 5 review v2 fix (L2/L7/M2), same file/scope.
 	relPath := fs.Arg(0)
+	if err := validateStorePath(relPath); err != nil {
+		fmt.Fprintln(os.Stderr, "credroute store remove:", err)
+		return 1
+	}
 
 	cfg, err := loadAndValidate(g.configPath)
 	if err != nil {
@@ -241,13 +300,35 @@ func cmdStoreRemove(args []string) int {
 		fmt.Fprintln(os.Stderr, "credroute store remove:", err)
 		return 1
 	}
-	if err := os.Remove(path); err != nil {
-		if os.IsNotExist(err) && *force {
+
+	// L7 (Fable 5 review v2): stat first and require a regular file, so
+	// `store remove` can never be pointed at (and delete) a directory
+	// inside the store dir.
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		if os.IsNotExist(statErr) && *force {
 			return 0
 		}
+		fmt.Fprintln(os.Stderr, "credroute store remove:", statErr)
+		return 4
+	}
+	if !info.Mode().IsRegular() {
+		fmt.Fprintf(os.Stderr, "credroute store remove: %s is not a regular file, refusing to remove it\n", path)
+		return 1
+	}
+	if err := os.Remove(path); err != nil {
 		fmt.Fprintln(os.Stderr, "credroute store remove:", err)
 		return 4
 	}
+	_ = audit.Append(audit.Entry{
+		Op:         "store",
+		Command:    "store remove",
+		Target:     string(handle),
+		ConfigPath: cfg.Store.Dir,
+		Exit:       0,
+		Decision:   "allow",
+		Caller:     auditCaller,
+	})
 	if !g.quiet {
 		fmt.Printf("credroute store remove: removed %s\n", handle)
 	}

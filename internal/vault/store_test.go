@@ -52,6 +52,37 @@ func TestStoreBackend_Exists(t *testing.T) {
 	}
 }
 
+// TestStoreBackend_List_SkipsTempResidue guards L7 (Fable 5 review v2): a
+// crashed `store add` between CreateTemp and rename can leave a
+// ".<name>.tmp-<random>" file behind; List must never surface it as a
+// real handle.
+func TestStoreBackend_List_SkipsTempResidue(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "github"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "github", "pat.age"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "github", ".pat.age.tmp-12345"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b := &StoreBackend{Dir: dir}
+
+	handles, err := b.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range handles {
+		if h == "store://github/.pat.age.tmp-12345" {
+			t.Errorf("List surfaced a crash-orphaned temp file as a handle: %v", handles)
+		}
+	}
+	if len(handles) != 1 || handles[0] != "store://github/pat.age" {
+		t.Errorf("List = %v, want only [store://github/pat.age]", handles)
+	}
+}
+
 func TestStoreBackend_Capabilities(t *testing.T) {
 	b := &StoreBackend{}
 	caps := b.Capabilities()

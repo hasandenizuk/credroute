@@ -248,9 +248,17 @@ func (b *StoreBackend) Store(ctx context.Context, h Handle, s *Secret) error {
 		return fmt.Errorf("vault: create temp file in %s: %w", dir, err)
 	}
 	tmpPath := tmp.Name()
-	_ = tmp.Close()
+	// M3 (Fable 5 review v2): age writes its ciphertext to this fd
+	// directly (via "-o tmpPath" below), so unlike fsutil.WriteFileAtomic
+	// (which writes bytes it already has in memory) the temp file must
+	// stay open until age has run and produced output, then be fsynced
+	// before rename. Without this, a crash shortly after `store add`
+	// reports success could leave a truncated or zero-length ciphertext
+	// durable at the final path (fails closed on later Retrieve, but the
+	// secret is lost).
 	ok := false
 	defer func() {
+		_ = tmp.Close()
 		if !ok {
 			_ = os.Remove(tmpPath)
 		}
@@ -278,6 +286,13 @@ func (b *StoreBackend) Store(ctx context.Context, h Handle, s *Secret) error {
 		return encryptErr
 	}
 
+	// age wrote its output via "-o tmpPath", a separate open of the same
+	// file, so tmp's own fd must be re-synced (its in-kernel view of the
+	// file is the same inode) before rename to guarantee the ciphertext
+	// survives a crash.
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("vault: fsync temp file %s: %w", tmpPath, err)
+	}
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		return fmt.Errorf("vault: chmod temp file %s: %w", tmpPath, err)
 	}
@@ -307,6 +322,12 @@ func (b *StoreBackend) List(_ context.Context) ([]string, error) {
 		if d.IsDir() {
 			return nil
 		}
+		if isStoreTempResidue(d.Name()) {
+			// L7 (Fable 5 review v2): a crashed `store add` between
+			// CreateTemp and rename can leave one of these behind;
+			// `store ls` must never surface it as a real handle.
+			return nil
+		}
 		rel, relErr := filepath.Rel(b.Dir, path)
 		if relErr != nil {
 			return relErr
@@ -321,4 +342,13 @@ func (b *StoreBackend) List(_ context.Context) ([]string, error) {
 		return nil, fmt.Errorf("vault: list %s: %w", b.Dir, err)
 	}
 	return handles, nil
+}
+
+// isStoreTempResidue reports whether name looks like a crash-orphaned
+// atomic-write temp file: Store's own temp files are named
+// ".<base>.tmp-<random>" (matching fsutil.WriteFileAtomic's own naming
+// scheme), and a crash between CreateTemp and rename can leave one behind
+// (L7, Fable 5 review v2).
+func isStoreTempResidue(name string) bool {
+	return strings.HasPrefix(name, ".") && strings.Contains(name, ".tmp-")
 }

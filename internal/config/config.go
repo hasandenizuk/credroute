@@ -195,6 +195,17 @@ func resolvedPath(path string) (string, error) {
 	return DefaultPath()
 }
 
+// ResolvedPath is the exported form of resolvedPath: it applies the exact
+// same precedence (--config flag > CREDROUTE_CONFIG env > DefaultPath())
+// that Load and OpenDocument use internally, for callers that need the
+// resolved location before the file necessarily exists (H1, Fable 5
+// review v2: `credroute init` used to resolve an empty path via
+// DefaultPath() alone, skipping CREDROUTE_CONFIG, which let it scaffold
+// or --force-overwrite the wrong file relative to every other command).
+func ResolvedPath(path string) (string, error) {
+	return resolvedPath(path)
+}
+
 // Load reads and strictly parses the config at path (see resolvedPath for
 // how an empty path is resolved), merging any include: files it names
 // (F11). Unknown YAML fields are a hard error (KnownFields). Load does not

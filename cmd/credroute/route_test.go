@@ -29,6 +29,10 @@ vault:
 `
 
 func TestCmdRouteAdd_AndLs(t *testing.T) {
+	// M2 (Fable 5 review v2): route add/assign now append an audit entry
+	// on success, so every test that succeeds must sandbox the state dir
+	// rather than writing to the real machine's audit.jsonl.
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
 	path := writeTestConfig(t, routeTestConfigYAML)
 
 	code := cmdRouteAdd([]string{"--config", path, "--platform", "github", "--identity", "alex@example.com", "--access", "read-write", "gh-rule"})
@@ -74,6 +78,7 @@ func TestCmdRouteAdd_UndefinedIdentityRefused(t *testing.T) {
 }
 
 func TestCmdRouteAdd_InsertsBeforeCatchAll(t *testing.T) {
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
 	withCatchAll := routeTestConfigYAML + `rules:
   - id: catch-all
     match: {}
@@ -98,6 +103,7 @@ func TestCmdRouteAdd_InsertsBeforeCatchAll(t *testing.T) {
 }
 
 func TestCmdRouteAssign(t *testing.T) {
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
 	withRule := routeTestConfigYAML + `rules:
   - id: gh-rule
     match: { platform: github }

@@ -43,7 +43,7 @@ func cmdIdentityAdd(args []string) int {
 	}
 	id := fs.Arg(0)
 
-	return withConfigEdit(g, "identity add", func(doc *config.Document) error {
+	return withConfigEdit(g, "identity add", id, func(doc *config.Document) error {
 		return doc.AddIdentity(id, *label)
 	})
 }
@@ -83,7 +83,7 @@ func cmdIdentityEdit(args []string) int {
 		return 1
 	}
 
-	return withConfigEdit(g, "identity edit", func(doc *config.Document) error {
+	return withConfigEdit(g, "identity edit", id, func(doc *config.Document) error {
 		if setLabel != nil {
 			if err := doc.SetIdentityLabel(id, *setLabel); err != nil {
 				return err

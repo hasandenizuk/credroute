@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hasandenizuk/credroute/internal/attest"
 )
 
 const editorTestConfig = `version: 1
@@ -403,6 +406,178 @@ vault:
 	}
 	if !strings.Contains(out, "rules:\n    - id: gh-rule\n") {
 		t.Errorf("rules not in expected block layout:\n%s", out)
+	}
+}
+
+// TestOpenDocument_ConcurrentEditsSerializeInsteadOfLosingAnUpdate guards
+// M1 (Fable 5 review v2): two concurrent editors of the same config used
+// to last-writer-wins, with the second rename silently discarding the
+// first editor's already-saved change. OpenDocument now flocks the
+// config, so the second OpenDocument call blocks until the first
+// editor's Close releases it, and reads the already-saved file rather
+// than racing it.
+func TestOpenDocument_ConcurrentEditsSerializeInsteadOfLosingAnUpdate(t *testing.T) {
+	path := writeEditorTestConfig(t)
+
+	docA, err := OpenDocument(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := docA.AddIdentity("a@example.com", "A"); err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{})
+	resultCh := make(chan error, 1)
+	go func() {
+		close(started)
+		// Must block here until docA.Close() below releases the lock.
+		docB, err := OpenDocument(path)
+		if err != nil {
+			resultCh <- err
+			return
+		}
+		defer docB.Close()
+		if err := docB.AddIdentity("b@example.com", "B"); err != nil {
+			resultCh <- err
+			return
+		}
+		resultCh <- docB.Save()
+	}()
+	<-started
+	time.Sleep(50 * time.Millisecond) // let the goroutine actually block on the flock
+
+	if err := docA.Save(); err != nil {
+		t.Fatalf("docA.Save: %v", err)
+	}
+	if err := docA.Close(); err != nil {
+		t.Fatalf("docA.Close: %v", err)
+	}
+
+	select {
+	case err := <-resultCh:
+		if err != nil {
+			t.Fatalf("second editor's edit/save: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the second editor; the lock may never have been released")
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Identities["a@example.com"]; !ok {
+		t.Error("identity a@example.com (first editor's change) was lost")
+	}
+	if _, ok := cfg.Identities["b@example.com"]; !ok {
+		t.Error("identity b@example.com (second editor's change) was lost")
+	}
+}
+
+// TestDocument_UpsertCredential_InvalidatesSidecarWhenHandleChangesUnderSameSlot
+// guards H2 (Fable 5 review v2): sidecars for slot-carrying credentials
+// are keyed by slot only, so re-pointing the SAME slot at a different
+// vault handle must invalidate the old sidecar rather than leaving a
+// "verified" attestation earned by the old handle readable under the new
+// one.
+func TestDocument_UpsertCredential_InvalidatesSidecarWhenHandleChangesUnderSameSlot(t *testing.T) {
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
+
+	doc, err := OpenDocument(writeEditorTestConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer doc.Close()
+
+	const slot = "~/.config/gws/profiles/personal-view"
+	const oldHandle = "age://google/alex-example-com/oauth-ro-a.json.age"
+	const newHandle = "age://google/alex-example-com/oauth-ro-b.json.age"
+
+	if err := doc.UpsertCredential("alex@example.com", "google", "read-only", Credential{
+		Type: "oauth", Vault: oldHandle, Slot: slot,
+	}); err != nil {
+		t.Fatalf("initial UpsertCredential: %v", err)
+	}
+
+	rec := &attest.Record{
+		Slot:              slot,
+		VaultHandle:       oldHandle,
+		ExpectedIdentity:  "alex@example.com",
+		Status:            attest.StatusVerified,
+		IdentityConfirmed: true,
+		Method:            "test",
+		CheckedAt:         time.Now().UTC(),
+	}
+	if err := attest.Write(rec); err != nil {
+		t.Fatalf("attest.Write: %v", err)
+	}
+	if _, err := attest.Read(slot, oldHandle); err != nil {
+		t.Fatalf("sanity check: sidecar should be readable before the edit: %v", err)
+	}
+
+	if err := doc.UpsertCredential("alex@example.com", "google", "read-only", Credential{
+		Type: "oauth", Vault: newHandle, Slot: slot,
+	}); err != nil {
+		t.Fatalf("replacing UpsertCredential: %v", err)
+	}
+
+	if _, err := attest.Read(slot, newHandle); !attest.IsNotFound(err) {
+		t.Errorf("sidecar for slot %q should have been invalidated after its vault handle changed, got err=%v", slot, err)
+	}
+}
+
+// TestDocument_UpsertCredential_NoInvalidationWhenNothingChanged confirms
+// the H2 fix does not fire (and does not error) when a credential is
+// re-upserted with the same slot/vault handle it already had.
+func TestDocument_UpsertCredential_NoInvalidationWhenNothingChanged(t *testing.T) {
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
+
+	doc, err := OpenDocument(writeEditorTestConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer doc.Close()
+
+	cred := Credential{Type: "pat", Vault: "age://github/alex-example-com/pat-repo.age"}
+	if err := doc.UpsertCredential("alex@example.com", "github", "read-write", cred); err != nil {
+		t.Fatalf("UpsertCredential: %v", err)
+	}
+}
+
+// TestDocument_AddRule_ExplicitIndexPastCatchAllIsClamped guards L4
+// (Fable 5 review v2): an explicit --index landing at or after a
+// trailing catch-all rule's position used to be inserted verbatim,
+// producing a config that config.Validate would then refuse ("catch-all
+// only legal as final rule"). It is now clamped to just before the
+// catch-all, same as the smart default (index < 0).
+func TestDocument_AddRule_ExplicitIndexPastCatchAllIsClamped(t *testing.T) {
+	doc, err := OpenDocument(writeEditorTestConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := Rule{ID: "explicit-past-end", Match: RuleMatch{Platform: StringOrList{"github"}}, Use: RuleUse{Identity: "alex@example.com", Access: "read-write"}}
+	// The base config has 2 rules (acme-google-ro, catch-all); index 5 is
+	// well past the end and past the catch-all.
+	if err := doc.AddRule(rule, 5); err != nil {
+		t.Fatalf("AddRule: %v", err)
+	}
+	cfg, err := doc.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"acme-google-ro", "explicit-past-end", "catch-all"}
+	if got := ruleIDs(cfg); !equalStrings(got, want) {
+		t.Errorf("rule order = %v, want %v", got, want)
+	}
+	// The fixture's own pre-existing rule references a platform/credential
+	// this test does not touch, so assert on the specific thing this fix
+	// is about (the catch-all placement) rather than full validity.
+	result := Validate(cfg)
+	for _, e := range result.Errors {
+		if strings.Contains(e.String(), "final rule") {
+			t.Errorf("clamped insert should not trigger the catch-all-placement error, got: %v", e)
+		}
 	}
 }
 

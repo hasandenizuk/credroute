@@ -153,6 +153,48 @@ func TestValidate_DuplicateRuleID(t *testing.T) {
 	}
 }
 
+// TestValidate_RuleIDControlCharacterIsRejected guards L3 (Fable 5 review
+// v2): a rule id containing a literal newline is not a YAML-injection
+// vector (yaml.v3 quotes it safely), but it can spoof terminal output
+// (route ls, error messages) and audit log lines. Rejected uniformly by
+// config.Validate rather than only by ad hoc callers.
+func TestValidate_RuleIDControlCharacterIsRejected(t *testing.T) {
+	cfg := baseValidConfig()
+	cfg.Rules[0].ID = "evil\nid"
+
+	res := Validate(cfg)
+	if !hasErrorContaining(res, "control character") {
+		t.Errorf("errors did not flag the control character in the rule id: %v", res.Errors)
+	}
+}
+
+// TestValidate_IdentityIDControlCharacterIsRejected is
+// TestValidate_RuleIDControlCharacterIsRejected's identity-id
+// counterpart.
+func TestValidate_IdentityIDControlCharacterIsRejected(t *testing.T) {
+	cfg := baseValidConfig()
+	evil := cfg.Identities["alex@example.com"]
+	delete(cfg.Identities, "alex@example.com")
+	cfg.Identities["evil\nid"] = evil
+	cfg.Rules[0].Use.Identity = "evil\nid"
+
+	res := Validate(cfg)
+	if !hasErrorContaining(res, "control character") {
+		t.Errorf("errors did not flag the control character in the identity id: %v", res.Errors)
+	}
+}
+
+// TestValidate_RuleIDTooLongIsRejected guards the maxIDLength half of L3.
+func TestValidate_RuleIDTooLongIsRejected(t *testing.T) {
+	cfg := baseValidConfig()
+	cfg.Rules[0].ID = strings.Repeat("x", maxIDLength+1)
+
+	res := Validate(cfg)
+	if !hasErrorContaining(res, "longer than the") {
+		t.Errorf("errors did not flag the over-length rule id: %v", res.Errors)
+	}
+}
+
 func TestValidate_ShadowedRule(t *testing.T) {
 	cfg := baseValidConfig()
 	// A second rule with an identical match block can never fire: the

@@ -22,9 +22,14 @@ package main
 import (
 	"bufio"
 	"flag"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/hasandenizuk/credroute/internal/describe"
@@ -187,6 +192,95 @@ func TestDescribeManifest_CoversEveryDispatchedCommand(t *testing.T) {
 	}
 	if len(onlyInDispatch) > 0 {
 		t.Errorf("this test's dispatch table has commands missing from the manifest: %v", onlyInDispatch)
+	}
+}
+
+// TestRunSwitchTopLevelCommandsAreDescribed closes the L5 (Fable 5 review
+// v2) gap left by the two tests above: they mechanically cross-check the
+// manifest against commandFuncs, but neither one is ever compared against
+// main.go's REAL switch statement, so a command added to run() and
+// forgotten in both places (manifest and commandFuncs alike) previously
+// shipped undescribed with nothing to catch it.
+//
+// This parses cmd/credroute/main.go itself (go/parser, stdlib) and pulls
+// every string case value out of run()'s switch, then checks each token
+// is covered by an exact-match manifest/commandFuncs entry (for a
+// single-word command like "audit") or a "token " prefix match (for a
+// command that fans out into subcommands of its own, like "route" ->
+// "route add"/"route assign"/"route ls").
+func TestRunSwitchTopLevelCommandsAreDescribed(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "main.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse main.go: %v", err)
+	}
+
+	var runDecl *ast.FuncDecl
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "run" {
+			runDecl = fn
+			break
+		}
+	}
+	if runDecl == nil {
+		t.Fatal("main.go: no func run found; this test needs updating to match main.go's structure")
+	}
+
+	ignore := map[string]bool{"-h": true, "--help": true, "help": true}
+	var tokens []string
+	ast.Inspect(runDecl.Body, func(n ast.Node) bool {
+		sw, ok := n.(*ast.SwitchStmt)
+		if !ok {
+			return true
+		}
+		for _, stmt := range sw.Body.List {
+			cc, ok := stmt.(*ast.CaseClause)
+			if !ok {
+				continue
+			}
+			for _, expr := range cc.List {
+				lit, ok := expr.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					continue
+				}
+				v, err := strconv.Unquote(lit.Value)
+				if err != nil || ignore[v] {
+					continue
+				}
+				tokens = append(tokens, v)
+			}
+		}
+		return true
+	})
+	if len(tokens) == 0 {
+		t.Fatal("found no case tokens in run()'s switch; this test needs updating to match main.go's structure")
+	}
+
+	described := map[string]bool{}
+	for _, cmd := range describe.Manifest() {
+		described[cmd.Name] = true
+	}
+	for name := range commandFuncs {
+		described[name] = true
+	}
+	for name := range noFlagSetCommands {
+		described[name] = true
+	}
+
+	for _, tok := range tokens {
+		if described[tok] {
+			continue
+		}
+		found := false
+		for name := range described {
+			if strings.HasPrefix(name, tok+" ") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("run() dispatches command %q but no manifest/commandFuncs entry named %q or %q... describes it", tok, tok, tok+" ")
+		}
 	}
 }
 

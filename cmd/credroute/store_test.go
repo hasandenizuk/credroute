@@ -2,10 +2,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hasandenizuk/credroute/internal/vault"
@@ -23,6 +25,10 @@ func storeCmdTestConfig(t *testing.T) (configPath, storeDir string) {
 	if _, err := exec.LookPath("age-keygen"); err != nil {
 		t.Skip("age-keygen binary not on PATH, skipping")
 	}
+	// M2 (Fable 5 review v2): store add/remove now append an audit entry
+	// on success, so every caller of this helper must sandbox the state
+	// dir rather than writing to the real machine's audit.jsonl.
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
 
 	dir := t.TempDir()
 	identityFile := filepath.Join(dir, "identity.txt")
@@ -168,6 +174,77 @@ func TestReadSecretInput_FromFile(t *testing.T) {
 	}
 	if string(b) != "value-with-trailing-newline" {
 		t.Errorf("readSecretInput(--from-file) = %q, want trailing newline trimmed", b)
+	}
+}
+
+// TestValidateStorePath_RejectsReservedCharacters guards L2 (Fable 5
+// review v2): "#", "?", and "%" are all meaningful to url.Parse (used by
+// resolvePath), so a path containing one could make the stored/retrieved
+// path disagree with the handle credroute reports back.
+func TestValidateStorePath_RejectsReservedCharacters(t *testing.T) {
+	for _, bad := range []string{"github/me/pat#frag", "github/me?query", "github/me%2e"} {
+		if err := validateStorePath(bad); err == nil {
+			t.Errorf("validateStorePath(%q) = nil, want an error", bad)
+		}
+	}
+	if err := validateStorePath("github/me/pat"); err != nil {
+		t.Errorf("validateStorePath(plain path) = %v, want nil", err)
+	}
+}
+
+func TestCmdStoreAdd_RejectsReservedPathCharacters(t *testing.T) {
+	path, _ := storeCmdTestConfig(t)
+	if code := cmdStoreAdd([]string{"--config", path, "--from-file", os.DevNull, "github/me/pat#frag"}); code == 0 {
+		t.Error("store add with a '#' in the path should be refused, got exit 0")
+	}
+}
+
+func TestCmdStoreRemove_RejectsReservedPathCharacters(t *testing.T) {
+	path, _ := storeCmdTestConfig(t)
+	if code := cmdStoreRemove([]string{"--config", path, "github/me/pat#frag"}); code == 0 {
+		t.Error("store remove with a '#' in the path should be refused, got exit 0")
+	}
+}
+
+// TestCmdStoreRemove_RefusesToRemoveADirectory guards L7 (Fable 5 review
+// v2): `store remove` must never delete a directory inside the store
+// dir, even one that happens to sit at the resolved path for a handle.
+func TestCmdStoreRemove_RefusesToRemoveADirectory(t *testing.T) {
+	path, storeDir := storeCmdTestConfig(t)
+	if err := os.MkdirAll(filepath.Join(storeDir, "github", "me"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	code := cmdStoreRemove([]string{"--config", path, "github/me"})
+	if code == 0 {
+		t.Fatal("store remove of a directory should be refused, got exit 0")
+	}
+	if _, err := os.Stat(filepath.Join(storeDir, "github", "me")); err != nil {
+		t.Errorf("directory was removed despite the refusal: %v", err)
+	}
+}
+
+// TestReadPromptedSecret_SingleLineIsAccepted is the control case for
+// TestReadPromptedSecret_RejectsBufferedMultilineInput below.
+func TestReadPromptedSecret_SingleLineIsAccepted(t *testing.T) {
+	b, err := readPromptedSecret(bufio.NewReader(strings.NewReader("just-one-line\n")))
+	if err != nil {
+		t.Fatalf("readPromptedSecret: %v", err)
+	}
+	if string(b) != "just-one-line" {
+		t.Errorf("readPromptedSecret = %q, want %q", b, "just-one-line")
+	}
+}
+
+// TestReadPromptedSecret_RejectsBufferedMultilineInput guards L1 (Fable 5
+// review v2): the interactive prompt used to silently truncate a pasted
+// multiline secret (e.g. a PEM key) at the first newline and store it
+// truncated with exit 0. When more than one line arrives in the same
+// read, it must now be rejected instead.
+func TestReadPromptedSecret_RejectsBufferedMultilineInput(t *testing.T) {
+	_, err := readPromptedSecret(bufio.NewReader(strings.NewReader("line-one\nline-two\n")))
+	if err == nil {
+		t.Error("readPromptedSecret with buffered multiline input should return an error, got nil")
 	}
 }
 

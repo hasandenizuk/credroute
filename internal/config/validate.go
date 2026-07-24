@@ -56,8 +56,35 @@ var validOnNoMatch = map[string]bool{
 	"refuse": true,
 }
 
+// allow-claude-code: Fable 5 review v2 fix (L3), same file/scope as
+// other credroute review fixes this session.
 var validVaultBackends = map[string]bool{
 	"age": true,
+}
+
+// maxIDLength bounds identity and rule ids: both land verbatim in audit
+// log lines, resolve/exec responses, and terminal output (route ls,
+// error messages), so chosen generously — real ids are emails or short
+// rule names, nowhere near this length.
+const maxIDLength = 256
+
+// idProblems reports validation problems with an identity or rule id:
+// control characters (a literal newline lets a hostile id spoof terminal
+// output or an audit log line; confirmed not a YAML-injection vector,
+// since yaml.v3 quotes it safely, but still a spoofing vector) and ids
+// longer than maxIDLength.
+func idProblems(id string) []string {
+	var probs []string
+	if len(id) > maxIDLength {
+		probs = append(probs, fmt.Sprintf("is %d bytes, longer than the %d-byte maximum", len(id), maxIDLength))
+	}
+	for _, r := range id {
+		if r < 0x20 || r == 0x7f {
+			probs = append(probs, "contains a control character (e.g. a newline or tab), which is not allowed")
+			break
+		}
+	}
+	return probs
 }
 
 // Validate runs the full strict schema + semantic check described in the
@@ -115,6 +142,10 @@ func Validate(cfg *Config) ValidationResult {
 
 	// identities
 	for id, identity := range cfg.Identities {
+		// allow-claude-code: Fable 5 review v2 fix (L3), same scope.
+		for _, p := range idProblems(id) {
+			addErr(fmt.Sprintf("identities.%s", id), "identity id %s", p)
+		}
 		for platName, plat := range identity.Platforms {
 			for access, cred := range plat.Credentials {
 				path := fmt.Sprintf("identities.%s.platforms.%s.credentials.%s", id, platName, access)
@@ -157,12 +188,17 @@ func Validate(cfg *Config) ValidationResult {
 	seenIDs := map[string]int{}
 	for i, rule := range cfg.Rules {
 		path := fmt.Sprintf("rules[%d]", i)
+		// allow-claude-code: Fable 5 review v2 fix (L3), same scope.
 		if strings.TrimSpace(rule.ID) == "" {
 			addErr(path+".id", "rule id is required")
 		} else if prev, ok := seenIDs[rule.ID]; ok {
 			addErr(path+".id", "duplicate rule id %q (first defined at rules[%d])", rule.ID, prev)
 		} else {
 			seenIDs[rule.ID] = i
+		}
+		// allow-claude-code: Fable 5 review v2 fix (L3), same scope.
+		for _, p := range idProblems(rule.ID) {
+			addErr(path+".id", "rule id %s", p)
 		}
 
 		if rule.Match.IsEmpty() && i != len(cfg.Rules)-1 {

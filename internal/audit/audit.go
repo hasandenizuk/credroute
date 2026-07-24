@@ -25,7 +25,7 @@ import (
 type Entry struct {
 	TS       time.Time `json:"ts"`
 	ID       string    `json:"id"`
-	Op       string    `json:"op"` // resolve | exec | verify
+	Op       string    `json:"op"` // resolve | exec | verify | config | store
 	Dir      string    `json:"dir,omitempty"`
 	Platform string    `json:"platform,omitempty"`
 	Task     string    `json:"task,omitempty"`
@@ -39,6 +39,18 @@ type Entry struct {
 	Exit         int    `json:"exit"`
 	Decision     string `json:"decision"` // allow | refuse
 	Caller       string `json:"caller,omitempty"`
+	// Command, Target, and ConfigPath are set only on Op "config"/"store"
+	// entries (M2, Fable 5 review v2: `identity add/edit`, `route
+	// add/assign`, and `store add/remove` previously left no audit trail
+	// at all, so the routing table itself could be rewritten with zero
+	// record of who changed what). Command is the credroute subcommand
+	// that ran (e.g. "identity add", "store remove"); Target is the
+	// specific thing it changed (an identity id, rule id, or store
+	// handle); ConfigPath is the config file it changed it in, or the
+	// store dir for a store command.
+	Command    string `json:"command,omitempty"`
+	Target     string `json:"target,omitempty"`
+	ConfigPath string `json:"config_path,omitempty"`
 }
 
 // NewID generates an opaque, sortable-by-time identifier for one audit

@@ -67,8 +67,16 @@ const (
 // never independently confirmed), stale (verified but older than maxAge),
 // mismatch, or unverified (no sidecar, or one that failed its integrity
 // check). maxAge <= 0 disables staleness (a verified sidecar never
-// expires).
-func ClassifyForResolve(rec *attest.Record, readErr error, maxAge time.Duration, now time.Time) string {
+// expires). currentVaultHandle is the vault handle the credential being
+// resolved ACTUALLY carries right now; if the sidecar was written for a
+// different handle (H2, Fable 5 review v2: sidecars for slot-carrying
+// credentials are keyed by slot only, so re-pointing a slot's vault
+// handle via `identity edit --add-credential` leaves the OLD handle's
+// "verified" attestation readable under the same key), that is treated
+// exactly like no sidecar at all rather than letting a verification
+// earned by one handle silently endorse a different one. Pass "" to skip
+// this check (e.g. from a caller with no current handle in hand).
+func ClassifyForResolve(rec *attest.Record, readErr error, maxAge time.Duration, now time.Time, currentVaultHandle string) string {
 	if readErr != nil || rec == nil {
 		// Covers attest.ErrNotFound and attest.ErrTampered alike: neither
 		// leaves anything a caller can trust. Spec 5.4: a tampered sidecar
@@ -76,6 +84,9 @@ func ClassifyForResolve(rec *attest.Record, readErr error, maxAge time.Duration,
 		// itself never performs that probe (see cmd/credroute/resolve.go),
 		// so the safest equivalent here is to report it exactly like "no
 		// sidecar at all" and let `credroute verify` supply the probe.
+		return ResolveUnverified
+	}
+	if currentVaultHandle != "" && rec.VaultHandle != "" && rec.VaultHandle != currentVaultHandle {
 		return ResolveUnverified
 	}
 
