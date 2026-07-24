@@ -1,5 +1,7 @@
 # credroute
 
+[![CI](https://github.com/hasandenizuk/credroute/actions/workflows/ci.yml/badge.svg)](https://github.com/hasandenizuk/credroute/actions/workflows/ci.yml)
+
 **A credential router for AI coding agents.** It answers one question, correctly, every time: for *this* client, *this* project, *this* task, on *this* platform, which identity should the agent use, at what access level? Then it checks the identity is really what it claims to be before handing it over.
 
 > Status: pre-release, but installable and working today. `init`, `resolve`, `verify`, `doctor`, identity/route/store management, and the adapter installers are built and tested (see [Install](#install) below). See [the roadmap](docs/roadmap.md) for what is still ahead.
