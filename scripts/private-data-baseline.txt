@@ -1,0 +1,59 @@
+# Accepted strings for scripts/scan-private-data.sh
+#
+# Every line is an exact string that the scanner would otherwise report: a home
+# directory, or a path under ~. Listing it here is a statement that it
+# is documentation or test data and is safe to publish. Anything NOT listed here
+# blocks the push, which is the point - a path or address nobody has accepted
+# before should never reach a public tag by accident.
+#
+# Adding a line is a deliberate act. Say in the commit message why the string is
+# safe. Secret material (keys, tokens) can never be accepted here: the scanner
+# reports it whether or not it appears in this file.
+#
+# Regenerate the candidate list with: scripts/scan-private-data.sh --baseline
+
+# Placeholder home directories used across the test suite.
+/home/h
+/home/testuser
+
+# Email addresses are deliberately not a rule. A contributor's own address is not
+# the leak this guards against, and blocking one on a first pull request is how a
+# check like this gets bypassed for good. A maintainer's personal address belongs
+# in the private pattern file, outside this repository.
+
+# Conventional locations credroute installs into or reads from.
+~/.claude/hooks/credroute-resolve-hook.sh
+~/.claude/skills/credroute/SKILL.md
+~/.config/credroute/age-identity.txt
+~/.config/credroute/config.yaml
+~/.config/credroute/config.yaml.
+~/.config/credroute/profiles
+~/.config/credroute/profiles/
+~/.credroute/shims/gws
+~/.local/share/credroute/store
+~/.local/state/credroute
+~/.local/state/credroute.
+~/.local/state/credroute/attest/
+~/.local/state/credroute/audit.jsonl
+~/.local/state/credroute/machine.key
+
+# Credential slots belonging to gws, the worked example of a wrapped tool.
+~/.config/gws/profiles/acme-gsc
+~/.config/gws/profiles/acme-view
+~/.config/gws/profiles/personal-default
+~/.config/gws/profiles/personal-view
+
+# Invented project trees in the worked examples. A path shaped like these but
+# naming a real client or a real folder is exactly the leak this file guards.
+~/Projects
+~/Projects/client.acme/
+~/Projects/client.acme/project.audit
+~/Projects/client.bluesky/
+~/Projects/client.bluesky/project.webapp/
+~/Projects/personal/
+~/foo/bar
+
+# The vault location used throughout the docs.
+~/vault
+~/vault/github/alex
+~/vault/github/alex/token.age

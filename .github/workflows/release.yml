@@ -30,6 +30,13 @@ jobs:
       - name: Install age
         run: sudo apt-get update && sudo apt-get install -y age
 
+      # A tag is the one thing that cannot be taken back: module proxies keep a
+      # copy of every published version permanently. v0.1.0 of this project
+      # shipped a personal filesystem path that way. This gate is why that
+      # cannot happen again.
+      - name: Scan for personal paths and secret material
+        run: scripts/scan-private-data.sh --tree
+
       - name: Vet
         run: go vet ./...
 

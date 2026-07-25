@@ -1,5 +1,8 @@
 # Changelog
 
+## [2026-07-25]
+- added: `scripts/scan-private-data.sh`, a check that refuses to publish personal paths or secret material. It runs as a pre-push hook, as a CI job, and as a gate before any release tag is cut. Install it with `scripts/scan-private-data.sh --install-hook`; see the Contributing section of the README.
+- added: `scripts/private-data-baseline.txt`, the list of placeholder paths this repository is allowed to contain. Anything not on it blocks the push.
 ## [2026-07-24]
 - added: Built credroute milestone 1: config/rules/vault Go packages + CLI (resolve/explain/exec/config validate/doctor/version), example config, full test suite (go build/vet/test all green, age live round-trip test included)
 - added: Fable 5 review v2 of agent-native command layer milestone (commits 077db25..5f9c002): read all new files, empirical tests with real age in sandbox. Found 0 blockers, 2 HIGH (init ignores CREDROUTE_CONFIG split-brain; stale verified sidecar transfers to re-pointed vault handle), 3 MED, 7 LOW

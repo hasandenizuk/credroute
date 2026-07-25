@@ -194,6 +194,20 @@ From here: `credroute explain --platform github --all` traces which rule matched
 - [Technical specification](docs/technical-spec.md): the full architecture, data model, config format, resolve contract, verification mechanism, vault interface, command surface, and threat model.
 - [Build roadmap](docs/roadmap.md): the phased plan, what ships in v1, and the known risks.
 
+## Contributing
+
+Before you push, install the guard that keeps private data out of this repository:
+
+```bash
+scripts/scan-private-data.sh --install-hook
+```
+
+It refuses any push containing a key, a token, a home directory, or a path into someone's own files, unless that exact string is listed in [`scripts/private-data-baseline.txt`](scripts/private-data-baseline.txt). CI runs the same check on every pull request and every release tag. The check exists because v0.1.0 of this project published a personal filesystem path, and a published version cannot be recalled: module proxies keep their copy permanently.
+
+Your own identifiers, such as a username or an employer's name, should never be written into this repository, not even into the scanner. Put them in a file outside it and point `CREDROUTE_PRIVACY_PATTERNS` at it. Without that file the check only recognises paths that start with a tilde or a home directory.
+
+It is a guardrail, not a cage. A secret split across two lines is invisible to it, and anyone can pass `--no-verify`. It raises the floor.
+
 ## License
 
 [MIT](LICENSE). Copyright (c) 2026 Hasan Deniz.
