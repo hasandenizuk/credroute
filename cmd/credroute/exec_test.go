@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hasandenizuk/credroute/internal/attest"
+	"github.com/hasandenizuk/credroute/internal/audit"
+	"github.com/hasandenizuk/credroute/internal/vault"
+	"github.com/hasandenizuk/credroute/internal/verify"
 )
 
 const execTestConfigTemplate = `
@@ -133,4 +137,90 @@ vault:
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("child command did not run under advisory verify: %v", err)
 	}
+}
+
+func TestCmdExec_MismatchWithUnrecordableObservationRefuses(t *testing.T) {
+	t.Setenv("CREDROUTE_NO_NETWORK", "1")
+	stateDir := t.TempDir()
+	t.Setenv("CREDROUTE_STATE_DIR", stateDir)
+
+	v := newTestVault(t)
+	handle := "age://github/alex/pat.age"
+	v.Encrypt(t, "github/alex/pat.age", []byte("ghp_initial_token"))
+
+	slot := filepath.Join(t.TempDir(), "gh-slot")
+	if _, err := verify.Run(t.Context(), verify.Request{
+		Platform:         "github",
+		CredentialType:   "pat",
+		ExpectedIdentity: "alex@example.com",
+		AccessLevel:      "read-write",
+		VaultHandle:      handle,
+		Slot:             slot,
+		Secret:           vault.NewSecret([]byte("ghp_initial_token")),
+		CheckedBy:        attest.DefaultCheckedBy(buildVersion),
+		AcceptBaseline:   true,
+	}, verify.NewRegistry(false)); err != nil {
+		t.Fatalf("seed accepted baseline: %v", err)
+	}
+
+	v.Encrypt(t, "github/alex/pat.age", []byte("ghp_changed_token"))
+	attestDir, err := attest.AttestDir()
+	if err != nil {
+		t.Fatalf("attest dir: %v", err)
+	}
+	if err := os.Chmod(attestDir, 0o500); err != nil {
+		t.Fatalf("make attest dir read-only: %v", err)
+	}
+	defer os.Chmod(attestDir, 0o700)
+
+	cfgPath := writeTestConfig(t, fmt.Sprintf(execTestConfigTemplate, slot, v.StoreDir, v.IdentityFile))
+	marker := filepath.Join(t.TempDir(), "child-ran.marker")
+	code, stderr := captureStderr(t, func() int {
+		return cmdExec([]string{"--config", cfgPath, "--platform", "github", "--", "sh", "-c", "printf ran > " + marker})
+	})
+	if code != 3 {
+		t.Fatalf("cmdExec exit code = %d, want 3; stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stderr, "refused after re-attestation") {
+		t.Fatalf("stderr = %q, want refusal reason without -v", stderr)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("child command ran despite mismatched fresh observation")
+	}
+	entries, err := audit.ReadAll()
+	if err != nil {
+		t.Fatalf("audit.ReadAll: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected an audit entry")
+	}
+	last := entries[len(entries)-1]
+	if last.Verification != verify.ResolveMismatch || last.Decision != "refuse" {
+		t.Fatalf("last audit verification/decision = (%q, %q), want (mismatch, refuse)", last.Verification, last.Decision)
+	}
+}
+
+func captureStderr(t *testing.T, f func() int) (int, string) {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stderr: %v", err)
+	}
+	os.Stderr = w
+	code := f()
+	_ = w.Close()
+	os.Stderr = old
+	var buf strings.Builder
+	tmp := make([]byte, 1024)
+	for {
+		n, readErr := r.Read(tmp)
+		if n > 0 {
+			buf.Write(tmp[:n])
+		}
+		if readErr != nil {
+			break
+		}
+	}
+	return code, buf.String()
 }

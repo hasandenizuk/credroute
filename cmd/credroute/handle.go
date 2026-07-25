@@ -11,12 +11,16 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/hasandenizuk/credroute/internal/attest"
+	"github.com/hasandenizuk/credroute/internal/audit"
 	"github.com/hasandenizuk/credroute/internal/vault"
+	"github.com/hasandenizuk/credroute/internal/verify"
 )
 
 func cmdHandleGet(args []string) int {
@@ -26,6 +30,7 @@ func cmdHandleGet(args []string) int {
 	toFile := fs.String("to-file", "", "write the secret to this path (0600 perms), instead of stdout")
 	toFD := fs.Int("to-fd", 0, "write the secret to this open file descriptor, instead of stdout")
 	forceReveal := fs.Bool("force-reveal", false, "allow printing the secret to stdout; refused without this even so (see below)")
+	allowUnmodeled := fs.Bool("allow-unmodeled-handle", false, "break-glass: retrieve a vault handle not modeled in config")
 	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
 		return 1
 	}
@@ -34,46 +39,116 @@ func cmdHandleGet(args []string) int {
 		return 1
 	}
 	handleStr := fs.Arg(0)
+	exitCode := 1
+	entry := audit.Entry{ID: audit.NewID(), Op: "handle get", Target: handleStr, Caller: auditCaller}
+	defer func() {
+		entry.Exit = exitCode
+		entry.Decision = decisionFor(exitCode)
+		_ = audit.Append(entry)
+	}()
 
 	cfg, err := loadAndValidate(g.configPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "credroute handle get:", err)
-		return 5
+		exitCode = 5
+		return exitCode
 	}
 
-	// F1: mirror resolve/exec's verification gate whenever this handle
-	// can be matched back to a configured identity. A handle with no
-	// match in config is not modeled here at all (e.g. ad hoc/debug use)
-	// and is passed through unverified, same as before this fix.
-	if id, platform, _, cred, findErr := findCredentialByVaultHandle(cfg, handleStr); findErr == nil {
+	id, platform, access, cred, findErr := findCredentialByVaultHandle(cfg, handleStr)
+	switch {
+	case findErr == nil:
+		entry.Identity = id
+		entry.Platform = platform
+		entry.Access = access
 		slot := expandSlot(cred.Slot)
-		pre := runVerifyPrecheck("", "", cfg.Defaults.Verify, cfg.Defaults.SidecarMaxAge, slot, cred.Vault)
+		pre := runVerifyPrecheck("", "", cfg.Defaults.Verify, cfg.Defaults.SidecarMaxAge, slot, cred.Vault, id, platform, access)
+		entry.Verification = pre.Status
 		if pre.Refuse() {
 			fmt.Fprintf(os.Stderr, "credroute handle get: refused: verification status %q under verify=%s for identity %q on platform %q (run `credroute verify --platform %s` to re-attest)\n", pre.Status, pre.Mode, id, platform, platform)
-			return 3
+			exitCode = 3
+			return exitCode
 		}
+	case errors.Is(findErr, errCredentialAmbiguous):
+		entry.Verification = verify.ResolveUnverified
+		fmt.Fprintf(os.Stderr, "credroute handle get: refused: %v\n", findErr)
+		exitCode = 3
+		return exitCode
+	case errors.Is(findErr, errCredentialNoMatch):
+		entry.Verification = "bypass_unmodeled_handle"
+		if !*allowUnmodeled {
+			fmt.Fprintf(os.Stderr, "credroute handle get: refused: vault handle %q is not modeled in config; pass --allow-unmodeled-handle for break-glass retrieval\n", handleStr)
+			exitCode = 3
+			return exitCode
+		}
+	default:
+		entry.Verification = verify.ResolveUnverified
+		fmt.Fprintln(os.Stderr, "credroute handle get:", findErr)
+		exitCode = 5
+		return exitCode
 	}
 
 	backend, err := buildVaultBackend(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "credroute handle get:", err)
-		return 4
+		exitCode = 4
+		return exitCode
 	}
 
 	secret, err := backend.Retrieve(context.Background(), vault.Handle(handleStr))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "credroute handle get:", err)
-		return 4
+		exitCode = 4
+		return exitCode
 	}
 	defer secret.Zero()
 
+	if findErr == nil {
+		registry := verify.NewRegistry(verify.LiveProbesEnabled())
+		outcome, verifyErr := verify.Run(context.Background(), verify.Request{
+			Platform:         platform,
+			CredentialType:   cred.Type,
+			ExpectedIdentity: id,
+			AccessLevel:      access,
+			VaultHandle:      cred.Vault,
+			Slot:             expandSlot(cred.Slot),
+			Secret:           secret,
+			CheckedBy:        attest.DefaultCheckedBy(buildVersion),
+		}, registry)
+		freshStatus := verify.ResolveStatusForAttest(outcome.Status)
+		if freshStatus == "" {
+			freshStatus = verify.ResolveUnverified
+		}
+		entry.Verification = freshStatus
+		mode := verify.EffectiveVerifyMode("", "", cfg.Defaults.Verify)
+		if verifyErr != nil {
+			if verify.ShouldRefuse(mode, freshStatus) {
+				fmt.Fprintf(os.Stderr, "credroute handle get: refused after re-attestation: verification status %q under verify=%s\n", freshStatus, mode)
+				exitCode = 3
+				return exitCode
+			}
+			fmt.Fprintf(os.Stderr, "credroute handle get: warning: could not record a fresh attestation: %v\n", verifyErr)
+			if mode == "required" {
+				fmt.Fprintln(os.Stderr, "credroute handle get: refused: fresh observation could not be recorded under verify=required")
+				exitCode = 3
+				return exitCode
+			}
+		} else if verify.ShouldRefuse(mode, freshStatus) {
+			fmt.Fprintf(os.Stderr, "credroute handle get: refused after re-attestation: verification status %q under verify=%s\n", freshStatus, mode)
+			exitCode = 3
+			return exitCode
+		}
+	}
+
 	switch {
 	case *toFile != "":
-		return writeSecretToFile(secret, *toFile)
+		exitCode = writeSecretToFile(secret, *toFile)
+		return exitCode
 	case *toFD != 0:
-		return writeSecretToFD(secret, *toFD)
+		exitCode = writeSecretToFD(secret, *toFD)
+		return exitCode
 	default:
-		return revealSecretToStdout(secret, *forceReveal)
+		exitCode = revealSecretToStdout(secret, *forceReveal)
+		return exitCode
 	}
 }
 

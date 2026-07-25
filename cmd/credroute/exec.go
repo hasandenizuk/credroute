@@ -101,7 +101,7 @@ func cmdExec(args []string) (exitCode int) {
 	// F1: verify and refuse BEFORE ever touching the vault, exactly like
 	// resolve - the shared decision in verifygate.go is what keeps the
 	// two paths from drifting apart again.
-	pre := runVerifyPrecheck("", res.Rule.Use.Verify, cfg.Defaults.Verify, cfg.Defaults.SidecarMaxAge, slot, res.Credential.Vault)
+	pre := runVerifyPrecheck("", res.Rule.Use.Verify, cfg.Defaults.Verify, cfg.Defaults.SidecarMaxAge, slot, res.Credential.Vault, res.Identity, *platform, res.Access)
 	entry.Verification = pre.Status
 	if pre.Refuse() {
 		fmt.Fprintf(os.Stderr, "credroute exec: refused: verification status %q under verify=%s; refusing (run `credroute verify --platform %s` to re-attest)\n", pre.Status, pre.Mode, *platform)
@@ -132,22 +132,30 @@ func cmdExec(args []string) (exitCode int) {
 		Platform:         *platform,
 		CredentialType:   res.Credential.Type,
 		ExpectedIdentity: res.Identity,
+		AccessLevel:      res.Access,
 		VaultHandle:      res.Credential.Vault,
 		Slot:             slot,
 		Secret:           secret,
 		CheckedBy:        attest.DefaultCheckedBy(buildVersion),
 	}, registry)
+	freshStatus := verify.ResolveStatusForAttest(outcome.Status)
+	if freshStatus == "" {
+		freshStatus = verify.ResolveUnverified
+	}
+	entry.Verification = freshStatus
 	if verifyErr != nil {
-		if g.verbose {
-			fmt.Fprintf(os.Stderr, "credroute exec: warning: could not record a fresh attestation: %v\n", verifyErr)
-		}
-	} else {
-		freshStatus := verify.ResolveStatusForAttest(outcome.Status)
-		entry.Verification = freshStatus
 		if verify.ShouldRefuse(pre.Mode, freshStatus) {
 			fmt.Fprintf(os.Stderr, "credroute exec: refused after re-attestation: verification status %q under verify=%s (run `credroute verify --platform %s` for detail)\n", freshStatus, pre.Mode, *platform)
 			return 3
 		}
+		fmt.Fprintf(os.Stderr, "credroute exec: warning: could not record a fresh attestation: %v\n", verifyErr)
+		if pre.Mode == "required" {
+			fmt.Fprintln(os.Stderr, "credroute exec: refused: fresh observation could not be recorded under verify=required")
+			return 3
+		}
+	} else if verify.ShouldRefuse(pre.Mode, freshStatus) {
+		fmt.Fprintf(os.Stderr, "credroute exec: refused after re-attestation: verification status %q under verify=%s (run `credroute verify --platform %s` for detail)\n", freshStatus, pre.Mode, *platform)
+		return 3
 	}
 
 	// Scope resolution (D7/D10, spec 6.1): the platform's scope profile

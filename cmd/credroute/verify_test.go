@@ -2,9 +2,13 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/hasandenizuk/credroute/internal/attest"
+	"github.com/hasandenizuk/credroute/internal/audit"
 	"github.com/hasandenizuk/credroute/internal/config"
 )
 
@@ -77,4 +81,87 @@ func TestFindCredentialBySlot_NoMatch(t *testing.T) {
 	if _, _, _, _, err := findCredentialBySlot(cfg, "/nowhere"); err == nil {
 		t.Fatal("expected an error for a slot with no matching credential")
 	}
+}
+
+func TestCmdVerify_UnconfirmedNeedsAcceptBaseline(t *testing.T) {
+	t.Setenv("CREDROUTE_NO_NETWORK", "1")
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
+	v := newTestVault(t)
+	v.Encrypt(t, "stripe/ops/key.age", []byte("stripe-secret"))
+	cfgPath := writeTestConfig(t, fmt.Sprintf(`
+version: 1
+defaults: { verify: required, on_no_match: refuse }
+identities:
+  ops@example.com:
+    platforms:
+      stripe:
+        credentials:
+          read-only: { type: api_key, vault: age://stripe/ops/key.age }
+rules:
+  - id: stripe
+    match: { platform: stripe }
+    use: { identity: ops@example.com, access: read-only }
+vault:
+  backend: age
+  age:
+    store_dir: %s
+    identity_file: %s
+`, v.StoreDir, v.IdentityFile))
+
+	code, stdout := captureStdout(t, func() int {
+		return cmdVerify([]string{"--config", cfgPath, "--platform", "stripe"})
+	})
+	if code != 3 {
+		t.Fatalf("verify exit code = %d, want 3; stdout=%s", code, stdout)
+	}
+	if !strings.Contains(stdout, "accept-baseline") {
+		t.Fatalf("stdout = %q, want exact accept-baseline command", stdout)
+	}
+
+	code, stdout = captureStdout(t, func() int {
+		return cmdVerify([]string{"--config", cfgPath, "--platform", "stripe", "--accept-baseline"})
+	})
+	if code != 0 {
+		t.Fatalf("verify --accept-baseline exit code = %d, want 0; stdout=%s", code, stdout)
+	}
+	rec, err := attest.Read("", "age://stripe/ops/key.age")
+	if err != nil {
+		t.Fatalf("attest.Read: %v", err)
+	}
+	if rec.Status != attest.StatusAcceptedBaseline || rec.Platform != "stripe" || rec.AccessLevel != "read-only" {
+		t.Fatalf("record = (%q, %q, %q), want accepted_baseline/stripe/read-only", rec.Status, rec.Platform, rec.AccessLevel)
+	}
+	entries, err := audit.ReadAll()
+	if err != nil {
+		t.Fatalf("audit.ReadAll: %v", err)
+	}
+	last := entries[len(entries)-1]
+	if last.Verification != string(attest.StatusAcceptedBaseline) || last.Decision != "allow" {
+		t.Fatalf("audit verification/decision = (%q, %q), want accepted_baseline/allow", last.Verification, last.Decision)
+	}
+}
+
+func captureStdout(t *testing.T, f func() int) (int, string) {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdout: %v", err)
+	}
+	os.Stdout = w
+	code := f()
+	_ = w.Close()
+	os.Stdout = old
+	var buf strings.Builder
+	tmp := make([]byte, 1024)
+	for {
+		n, readErr := r.Read(tmp)
+		if n > 0 {
+			buf.Write(tmp[:n])
+		}
+		if readErr != nil {
+			break
+		}
+	}
+	return code, buf.String()
 }

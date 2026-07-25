@@ -149,6 +149,14 @@ credroute verify --platform github
 
 This performs a live check against the actual platform (it needs network access and a real token) and records the result. Once it reports `"status": "verified"`, `resolve` returns `"status": "ok"`.
 
+For a platform that has no live identity prober yet, `verify` reports `"status": "unconfirmed"` and exits non-zero under the default `verify: required` mode. To use that platform anyway, the operator must deliberately accept the exact current secret as the baseline:
+
+```
+credroute verify --platform stripe --accept-baseline
+```
+
+That records `"status": "accepted_baseline"`. Later changes to the secret fingerprint refuse as a mismatch.
+
 To try the rest of this walkthrough offline, without a live token, loosen just this one rule instead of the whole config:
 
 ```

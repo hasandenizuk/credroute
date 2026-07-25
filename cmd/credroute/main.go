@@ -84,7 +84,7 @@ Usage:
   credroute resolve --platform <name> [--dir <path>] [--task <tag>] [--access <level>] [--verify=required|advisory|off] [--json]
   credroute explain [--all] --platform <name> [--dir <path>] [--task <tag>] [--json]
   credroute exec [--platform <name>] [--dir <path>] [--task <tag>] [--access <level>] [--export-generic] -- <cmd> [args...]
-  credroute verify [--slot <path> | --platform <name> [--dir <path>] [--task <tag>]] [--after-login] [--json]
+  credroute verify [--slot <path> | --platform <name> [--dir <path>] [--task <tag>]] [--after-login] [--accept-baseline] [--json]
   credroute config validate [path]
   credroute doctor
   credroute profiles ls [--json]
@@ -100,7 +100,7 @@ Usage:
   credroute store ls [--json]
   credroute store remove <path> [--force]
   credroute describe [--json] [<command>]
-  credroute handle get <vault-handle> [--to-file <path> | --to-fd <n> | --force-reveal]
+  credroute handle get <vault-handle> [--allow-unmodeled-handle] [--to-file <path> | --to-fd <n> | --force-reveal]
   credroute hook claude-code   (reads PreToolUse JSON on stdin, F6)
   credroute version
 

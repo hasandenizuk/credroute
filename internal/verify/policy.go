@@ -54,11 +54,12 @@ func EffectiveVerifyMode(cliFlag, ruleVerify, defaultsVerify string) string {
 // identity) and from ResolveUnverified (no usable sidecar at all); it is
 // treated exactly like ResolveUnverified by ShouldRefuse.
 const (
-	ResolveVerified    = "verified"
-	ResolveUnconfirmed = "unconfirmed"
-	ResolveStale       = "stale"
-	ResolveMismatch    = "mismatch"
-	ResolveUnverified  = "unverified"
+	ResolveVerified         = "verified"
+	ResolveAcceptedBaseline = "accepted_baseline"
+	ResolveUnconfirmed      = "unconfirmed"
+	ResolveStale            = "stale"
+	ResolveMismatch         = "mismatch"
+	ResolveUnverified       = "unverified"
 )
 
 // ClassifyForResolve turns a sidecar read (rec, readErr) into the status
@@ -76,7 +77,7 @@ const (
 // exactly like no sidecar at all rather than letting a verification
 // earned by one handle silently endorse a different one. Pass "" to skip
 // this check (e.g. from a caller with no current handle in hand).
-func ClassifyForResolve(rec *attest.Record, readErr error, maxAge time.Duration, now time.Time, currentVaultHandle string) string {
+func ClassifyForResolve(rec *attest.Record, readErr error, maxAge time.Duration, now time.Time, currentVaultHandle, currentIdentity, currentPlatform, currentAccess string) string {
 	if readErr != nil || rec == nil {
 		// Covers attest.ErrNotFound and attest.ErrTampered alike: neither
 		// leaves anything a caller can trust. Spec 5.4: a tampered sidecar
@@ -86,7 +87,16 @@ func ClassifyForResolve(rec *attest.Record, readErr error, maxAge time.Duration,
 		// sidecar at all" and let `credroute verify` supply the probe.
 		return ResolveUnverified
 	}
-	if currentVaultHandle != "" && rec.VaultHandle != "" && rec.VaultHandle != currentVaultHandle {
+	if currentVaultHandle != "" && rec.VaultHandle != currentVaultHandle {
+		return ResolveUnverified
+	}
+	if currentIdentity != "" && rec.ExpectedIdentity != currentIdentity {
+		return ResolveUnverified
+	}
+	if currentPlatform != "" && rec.Platform != currentPlatform {
+		return ResolveUnverified
+	}
+	if currentAccess != "" && rec.AccessLevel != currentAccess {
 		return ResolveUnverified
 	}
 
@@ -95,6 +105,8 @@ func ClassifyForResolve(rec *attest.Record, readErr error, maxAge time.Duration,
 		return ResolveMismatch
 	case attest.StatusUnreadable:
 		return ResolveUnverified
+	case attest.StatusAcceptedBaseline:
+		return ResolveAcceptedBaseline
 	case attest.StatusUnconfirmed:
 		return ResolveUnconfirmed
 	case attest.StatusVerified:
@@ -116,6 +128,8 @@ func ResolveStatusForAttest(status attest.Status) string {
 	switch status {
 	case attest.StatusVerified:
 		return ResolveVerified
+	case attest.StatusAcceptedBaseline:
+		return ResolveAcceptedBaseline
 	case attest.StatusUnconfirmed:
 		return ResolveUnconfirmed
 	case attest.StatusMismatch:
@@ -141,9 +155,9 @@ func ShouldRefuse(mode, status string) bool {
 		return false
 	}
 	switch status {
-	case ResolveMismatch, ResolveUnverified, ResolveStale, ResolveUnconfirmed:
-		return true
-	default:
+	case ResolveVerified, ResolveAcceptedBaseline:
 		return false
+	default:
+		return true
 	}
 }

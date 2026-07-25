@@ -60,6 +60,7 @@ func cmdVerify(args []string) int {
 	task := fs.String("task", "", "task tag, used with --platform")
 	dir := fs.String("dir", "", "directory to resolve for, used with --platform (default: cwd)")
 	afterLogin := fs.Bool("after-login", false, "this run follows a fresh login into the slot (spec 5.3 login guard)")
+	acceptBaseline := fs.Bool("accept-baseline", false, "accept this exact fingerprint-only observation as the baseline for this identity")
 	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
 		return 1
 	}
@@ -148,10 +149,12 @@ func cmdVerify(args []string) int {
 		Platform:         platformName,
 		CredentialType:   cred.Type,
 		ExpectedIdentity: identityID,
+		AccessLevel:      access,
 		VaultHandle:      cred.Vault,
 		Slot:             slot,
 		Secret:           secret,
 		CheckedBy:        attest.DefaultCheckedBy(buildVersion),
+		AcceptBaseline:   *acceptBaseline,
 	}
 
 	outcome, runErr := verify.Run(ctx, req, registry)
@@ -179,11 +182,16 @@ func cmdVerify(args []string) int {
 	}
 	// allow-claude-code: see file header.
 	resp.ScopeWarning = scopeOverPrivilegeWarning(platformName, access, *task, outcome.ObservedScopes)
+	if outcome.Status == attest.StatusUnconfirmed && outcome.Method == "fingerprint" {
+		resp.Detail = strings.TrimSpace(resp.Detail + fmt.Sprintf("; run `credroute verify --platform %s --accept-baseline` to accept this exact secret as the baseline", platformName))
+	}
 
 	exitCode := 1
 	switch outcome.Status {
-	case attest.StatusVerified, attest.StatusUnconfirmed:
+	case attest.StatusVerified, attest.StatusAcceptedBaseline:
 		exitCode = 0
+	case attest.StatusUnconfirmed:
+		exitCode = 3
 	case attest.StatusMismatch:
 		exitCode = 3
 	case attest.StatusUnreadable:

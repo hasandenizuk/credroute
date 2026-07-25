@@ -43,8 +43,11 @@ const (
 	// prober named the account, so identity itself was never confirmed.
 	// Reported honestly instead of collapsing into StatusVerified.
 	StatusUnconfirmed Status = "unconfirmed"
-	StatusMismatch    Status = "mismatch"
-	StatusUnreadable  Status = "unreadable"
+	// StatusAcceptedBaseline is a fingerprint-only observation the
+	// operator explicitly accepted as the baseline for this credential.
+	StatusAcceptedBaseline Status = "accepted_baseline"
+	StatusMismatch         Status = "mismatch"
+	StatusUnreadable       Status = "unreadable"
 )
 
 // Record is the sidecar document (spec 5.4). One file per slot, or per
@@ -54,6 +57,8 @@ type Record struct {
 	Slot             string `json:"slot,omitempty"`
 	VaultHandle      string `json:"vault_handle"`
 	ExpectedIdentity string `json:"expected_identity"`
+	Platform         string `json:"platform,omitempty"`
+	AccessLevel      string `json:"access_level,omitempty"`
 	ObservedIdentity string `json:"observed_identity,omitempty"`
 	Status           Status `json:"status"`
 	// IdentityConfirmed is true only when a prober actually named the

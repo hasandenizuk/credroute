@@ -16,10 +16,12 @@ type Request struct {
 	Platform         string
 	CredentialType   string // oauth | api_key | bearer_token | pat
 	ExpectedIdentity string
+	AccessLevel      string
 	VaultHandle      string
 	Slot             string // may be empty for slotless credentials
 	Secret           *vault.Secret
 	CheckedBy        string
+	AcceptBaseline   bool
 }
 
 // allow-claude-code: see prober.go header.
@@ -90,6 +92,8 @@ func Run(ctx context.Context, req Request, reg *Registry) (Outcome, error) {
 		Slot:             req.Slot,
 		VaultHandle:      req.VaultHandle,
 		ExpectedIdentity: req.ExpectedIdentity,
+		Platform:         req.Platform,
+		AccessLevel:      req.AccessLevel,
 		Method:           method,
 		Fingerprint:      fingerprint,
 		CheckedAt:        time.Now().UTC(),
@@ -136,10 +140,29 @@ func Run(ctx context.Context, req Request, reg *Registry) (Outcome, error) {
 		// (F2): the honest status caps at "unconfirmed", never
 		// "verified", regardless of whether the fingerprint matched.
 		switch {
+		// An explicit --accept-baseline outranks a changed fingerprint. The
+		// operator is asserting that the bytes in the slot right now are the
+		// new baseline, which is exactly what they must do after rotating a
+		// secret. Testing the mismatch first made the first accept after a
+		// rotation report tampering and exit 3, so the operator had to run
+		// the identical command twice: a habit worth nobody's while, since
+		// the whole value of this step is that it is considered once.
+		case req.AcceptBaseline:
+			rec.Status = attest.StatusAcceptedBaseline
+			outcome.Status = attest.StatusAcceptedBaseline
+			if prior != nil && prior.Fingerprint != "" && prior.Fingerprint != fingerprint {
+				outcome.Detail = "operator accepted a changed secret as the new fingerprint baseline for this identity"
+			} else {
+				outcome.Detail = "operator accepted this exact fingerprint as the baseline for this identity"
+			}
 		case prior != nil && prior.Fingerprint != "" && prior.Fingerprint != fingerprint:
 			rec.Status = attest.StatusMismatch
 			outcome.Status = attest.StatusMismatch
-			outcome.Detail = "secret fingerprint changed since the last attestation (identity not independently confirmed: fingerprint-only method)"
+			outcome.Detail = "secret fingerprint changed since the last attestation (identity not independently confirmed: fingerprint-only method); re-run with --accept-baseline if you changed it deliberately"
+		case prior != nil && prior.Status == attest.StatusAcceptedBaseline && prior.Fingerprint == fingerprint:
+			rec.Status = attest.StatusAcceptedBaseline
+			outcome.Status = attest.StatusAcceptedBaseline
+			outcome.Detail = "operator-accepted fingerprint baseline is unchanged"
 		default:
 			rec.Status = attest.StatusUnconfirmed
 			outcome.Status = attest.StatusUnconfirmed

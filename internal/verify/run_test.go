@@ -53,6 +53,119 @@ func TestRun_FirstAttestation_FingerprintOnly_EstablishesBaseline(t *testing.T) 
 	}
 }
 
+func TestRun_AcceptBaselineWritesAcceptedBaseline(t *testing.T) {
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
+
+	req := Request{
+		Platform:         "stripe",
+		CredentialType:   "api_key",
+		ExpectedIdentity: "ops@example.com",
+		AccessLevel:      "read-only",
+		VaultHandle:      "age://stripe/ops/key.age",
+		Secret:           vault.NewSecret([]byte("secret-v1")),
+		AcceptBaseline:   true,
+	}
+	out, err := Run(context.Background(), req, NewRegistry(false))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if out.Status != attest.StatusAcceptedBaseline {
+		t.Fatalf("Status = %q, want accepted_baseline", out.Status)
+	}
+
+	rec, err := attest.Read("", req.VaultHandle)
+	if err != nil {
+		t.Fatalf("attest.Read after Run: %v", err)
+	}
+	if rec.Status != attest.StatusAcceptedBaseline {
+		t.Fatalf("recorded status = %q, want accepted_baseline", rec.Status)
+	}
+	if rec.Platform != "stripe" || rec.AccessLevel != "read-only" {
+		t.Fatalf("record binding = (%q, %q), want (stripe, read-only)", rec.Platform, rec.AccessLevel)
+	}
+}
+
+func TestRun_AcceptedBaselineStaysAcceptedWhenFingerprintUnchanged(t *testing.T) {
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
+
+	req := Request{
+		Platform:         "stripe",
+		CredentialType:   "api_key",
+		ExpectedIdentity: "ops@example.com",
+		AccessLevel:      "read-only",
+		VaultHandle:      "age://stripe/ops/key.age",
+		Secret:           vault.NewSecret([]byte("secret-v1")),
+		AcceptBaseline:   true,
+	}
+	if _, err := Run(context.Background(), req, NewRegistry(false)); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	req.AcceptBaseline = false
+	req.Secret = vault.NewSecret([]byte("secret-v1"))
+	out, err := Run(context.Background(), req, NewRegistry(false))
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if out.Status != attest.StatusAcceptedBaseline {
+		t.Fatalf("Status = %q, want accepted_baseline for unchanged accepted fingerprint", out.Status)
+	}
+}
+
+// N1 (Fable 5 fix-verification v1): accepting a rotated secret must work on
+// the first try. The mismatch branch used to be tested before the accept
+// request, so the operator was told "mismatch" and exit 3, and had to run the
+// identical command a second time. Failing closed made it a usability trap
+// rather than a hole, but training someone to repeat a refused credential
+// command is the opposite of what this step is for.
+func TestRun_AcceptBaselineAfterRotation_AcceptsOnFirstRun(t *testing.T) {
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
+
+	req := Request{
+		Platform:         "stripe",
+		CredentialType:   "api_key",
+		ExpectedIdentity: "ops@example.com",
+		AccessLevel:      "read-only",
+		VaultHandle:      "age://stripe/ops/key.age",
+		Secret:           vault.NewSecret([]byte("secret-v1")),
+		AcceptBaseline:   true,
+	}
+	if _, err := Run(context.Background(), req, NewRegistry(false)); err != nil {
+		t.Fatalf("accept v1: %v", err)
+	}
+
+	// Rotate the secret, then accept the new bytes deliberately.
+	req.Secret = vault.NewSecret([]byte("secret-v2"))
+	out, err := Run(context.Background(), req, NewRegistry(false))
+	if err != nil {
+		t.Fatalf("accept v2: %v", err)
+	}
+	if out.Status != attest.StatusAcceptedBaseline {
+		t.Fatalf("Status = %q, want accepted_baseline on the first accept after a rotation", out.Status)
+	}
+
+	// And the new baseline sticks without re-accepting.
+	req.AcceptBaseline = false
+	req.Secret = vault.NewSecret([]byte("secret-v2"))
+	out, err = Run(context.Background(), req, NewRegistry(false))
+	if err != nil {
+		t.Fatalf("third Run: %v", err)
+	}
+	if out.Status != attest.StatusAcceptedBaseline {
+		t.Fatalf("Status = %q, want the rotated baseline to hold", out.Status)
+	}
+
+	// A further change the operator did NOT accept is still a mismatch.
+	req.Secret = vault.NewSecret([]byte("secret-v3"))
+	out, err = Run(context.Background(), req, NewRegistry(false))
+	if err != nil {
+		t.Fatalf("fourth Run: %v", err)
+	}
+	if out.Status != attest.StatusMismatch {
+		t.Fatalf("Status = %q, want mismatch for an unaccepted change", out.Status)
+	}
+}
+
 func TestRun_FingerprintChange_IsMismatch(t *testing.T) {
 	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
 

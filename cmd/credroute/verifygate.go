@@ -40,7 +40,7 @@ func (p verifyPrecheck) Refuse() bool { return verify.ShouldRefuse(p.Mode, p.Sta
 // handle get), and defaults.verify, then classifies whatever the
 // attestation sidecar currently says about slot/vaultHandle (KeyFor
 // prefers slot; see internal/attest).
-func runVerifyPrecheck(cliFlag, ruleVerify, defaultsVerify, sidecarMaxAge, slot, vaultHandle string) verifyPrecheck {
+func runVerifyPrecheck(cliFlag, ruleVerify, defaultsVerify, sidecarMaxAge, slot, vaultHandle, identity, platform, access string) verifyPrecheck {
 	mode := verify.EffectiveVerifyMode(cliFlag, ruleVerify, defaultsVerify)
 	var maxAge time.Duration
 	if sidecarMaxAge != "" {
@@ -49,7 +49,7 @@ func runVerifyPrecheck(cliFlag, ruleVerify, defaultsVerify, sidecarMaxAge, slot,
 		}
 	}
 	rec, readErr := attest.Read(slot, vaultHandle)
-	status := verify.ClassifyForResolve(rec, readErr, maxAge, time.Now().UTC(), vaultHandle)
+	status := verify.ClassifyForResolve(rec, readErr, maxAge, time.Now().UTC(), vaultHandle, identity, platform, access)
 	return verifyPrecheck{Mode: mode, Status: status}
 }
 
@@ -72,6 +72,11 @@ type credMatch struct {
 	id, platform, access string
 	cred                 config.Credential
 }
+
+var (
+	errCredentialNoMatch   = fmt.Errorf("no matching credential")
+	errCredentialAmbiguous = fmt.Errorf("ambiguous credential")
+)
 
 // findCredentialMatches walks every identity/platform/credential in cfg
 // and collects every one for which match returns true, sorted
@@ -107,7 +112,7 @@ func findCredentialMatches(cfg *config.Config, match func(config.Credential) boo
 // picking one at random).
 func resolveUniqueIdentity(matches []credMatch, subject string) (id, platform, access string, cred config.Credential, err error) {
 	if len(matches) == 0 {
-		return "", "", "", config.Credential{}, fmt.Errorf("no credential in config has %s", subject)
+		return "", "", "", config.Credential{}, fmt.Errorf("%w: no credential in config has %s", errCredentialNoMatch, subject)
 	}
 	distinct := map[string]bool{}
 	for _, m := range matches {
@@ -119,7 +124,7 @@ func resolveUniqueIdentity(matches []credMatch, subject string) (id, platform, a
 			ids = append(ids, id)
 		}
 		sort.Strings(ids)
-		return "", "", "", config.Credential{}, fmt.Errorf("%s is claimed by multiple identities (%s); disambiguate with --platform", subject, strings.Join(ids, ", "))
+		return "", "", "", config.Credential{}, fmt.Errorf("%w: %s is claimed by multiple identities (%s); disambiguate with --platform", errCredentialAmbiguous, subject, strings.Join(ids, ", "))
 	}
 	m := matches[0]
 	return m.id, m.platform, m.access, m.cred, nil

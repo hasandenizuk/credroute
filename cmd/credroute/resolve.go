@@ -192,7 +192,7 @@ func doResolve(configPath, platform, task, dirFlag, verifyFlag, accessFlag strin
 	slot := expandSlot(res.Credential.Slot)
 	resp.Slot = slot
 
-	pre := runVerifyPrecheck(verifyFlag, res.Rule.Use.Verify, cfg.Defaults.Verify, cfg.Defaults.SidecarMaxAge, slot, res.Credential.Vault)
+	pre := runVerifyPrecheck(verifyFlag, res.Rule.Use.Verify, cfg.Defaults.Verify, cfg.Defaults.SidecarMaxAge, slot, res.Credential.Vault, res.Identity, platform, res.Access)
 	resp.Verification.Status = pre.Status
 	if rec, readErr := attest.Read(slot, res.Credential.Vault); readErr == nil && rec != nil {
 		resp.Verification.IdentityConfirmed = rec.IdentityConfirmed

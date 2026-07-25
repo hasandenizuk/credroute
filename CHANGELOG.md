@@ -1,6 +1,9 @@
 # Changelog
 
 ## [2026-07-25]
+- fixed: `exec` and `handle get` now fail closed when a fresh verification observes a mismatch but the attestation cannot be recorded; audit entries keep the true observed status.
+- changed: attestation records are now bound to vault handle, identity, platform, and access level; `handle get` refuses unmodeled and ambiguous handles by default, with `--allow-unmodeled-handle` as an audited break-glass path.
+- added: `credroute verify --accept-baseline` for fingerprint-only platforms. Plain `unconfirmed` no longer exits 0 under `verify: required`; an explicit `accepted_baseline` passes until the secret fingerprint changes.
 - added: `scripts/scan-private-data.sh`, a check that refuses to publish personal paths or secret material. It runs as a pre-push hook, as a CI job, and as a gate before any release tag is cut. Install it with `scripts/scan-private-data.sh --install-hook`; see the Contributing section of the README.
 - added: `scripts/private-data-baseline.txt`, the list of placeholder paths this repository is allowed to contain. Anything not on it blocks the push.
 ## [2026-07-24]

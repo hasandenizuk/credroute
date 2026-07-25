@@ -41,14 +41,14 @@ func TestClassifyForResolve(t *testing.T) {
 	maxAge := 24 * time.Hour
 
 	t.Run("no sidecar is unverified", func(t *testing.T) {
-		got := ClassifyForResolve(nil, attest.ErrNotFound, maxAge, now, "")
+		got := ClassifyForResolve(nil, attest.ErrNotFound, maxAge, now, "", "", "", "")
 		if got != ResolveUnverified {
 			t.Fatalf("got %q, want %q", got, ResolveUnverified)
 		}
 	})
 
 	t.Run("tampered sidecar is unverified", func(t *testing.T) {
-		got := ClassifyForResolve(nil, attest.ErrTampered, maxAge, now, "")
+		got := ClassifyForResolve(nil, attest.ErrTampered, maxAge, now, "", "", "", "")
 		if got != ResolveUnverified {
 			t.Fatalf("got %q, want %q", got, ResolveUnverified)
 		}
@@ -56,7 +56,7 @@ func TestClassifyForResolve(t *testing.T) {
 
 	t.Run("fresh verified stays verified", func(t *testing.T) {
 		rec := &attest.Record{Status: attest.StatusVerified, CheckedAt: now.Add(-time.Hour)}
-		got := ClassifyForResolve(rec, nil, maxAge, now, "")
+		got := ClassifyForResolve(rec, nil, maxAge, now, "", "", "", "")
 		if got != ResolveVerified {
 			t.Fatalf("got %q, want %q", got, ResolveVerified)
 		}
@@ -64,7 +64,7 @@ func TestClassifyForResolve(t *testing.T) {
 
 	t.Run("old verified becomes stale", func(t *testing.T) {
 		rec := &attest.Record{Status: attest.StatusVerified, CheckedAt: now.Add(-48 * time.Hour)}
-		got := ClassifyForResolve(rec, nil, maxAge, now, "")
+		got := ClassifyForResolve(rec, nil, maxAge, now, "", "", "", "")
 		if got != ResolveStale {
 			t.Fatalf("got %q, want %q", got, ResolveStale)
 		}
@@ -72,7 +72,7 @@ func TestClassifyForResolve(t *testing.T) {
 
 	t.Run("maxAge zero disables staleness", func(t *testing.T) {
 		rec := &attest.Record{Status: attest.StatusVerified, CheckedAt: now.Add(-1000 * time.Hour)}
-		got := ClassifyForResolve(rec, nil, 0, now, "")
+		got := ClassifyForResolve(rec, nil, 0, now, "", "", "", "")
 		if got != ResolveVerified {
 			t.Fatalf("got %q, want %q", got, ResolveVerified)
 		}
@@ -80,7 +80,7 @@ func TestClassifyForResolve(t *testing.T) {
 
 	t.Run("mismatch stays mismatch regardless of age", func(t *testing.T) {
 		rec := &attest.Record{Status: attest.StatusMismatch, CheckedAt: now.Add(-1000 * time.Hour)}
-		got := ClassifyForResolve(rec, nil, maxAge, now, "")
+		got := ClassifyForResolve(rec, nil, maxAge, now, "", "", "", "")
 		if got != ResolveMismatch {
 			t.Fatalf("got %q, want %q", got, ResolveMismatch)
 		}
@@ -88,7 +88,7 @@ func TestClassifyForResolve(t *testing.T) {
 
 	t.Run("unreadable status maps to unverified", func(t *testing.T) {
 		rec := &attest.Record{Status: attest.StatusUnreadable, CheckedAt: now}
-		got := ClassifyForResolve(rec, nil, maxAge, now, "")
+		got := ClassifyForResolve(rec, nil, maxAge, now, "", "", "", "")
 		if got != ResolveUnverified {
 			t.Fatalf("got %q, want %q", got, ResolveUnverified)
 		}
@@ -96,9 +96,17 @@ func TestClassifyForResolve(t *testing.T) {
 
 	t.Run("unconfirmed status maps to unconfirmed, distinct from verified", func(t *testing.T) {
 		rec := &attest.Record{Status: attest.StatusUnconfirmed, CheckedAt: now}
-		got := ClassifyForResolve(rec, nil, maxAge, now, "")
+		got := ClassifyForResolve(rec, nil, maxAge, now, "", "", "", "")
 		if got != ResolveUnconfirmed {
 			t.Fatalf("got %q, want %q", got, ResolveUnconfirmed)
+		}
+	})
+
+	t.Run("accepted baseline satisfies resolve", func(t *testing.T) {
+		rec := &attest.Record{Status: attest.StatusAcceptedBaseline, CheckedAt: now}
+		got := ClassifyForResolve(rec, nil, maxAge, now, "", "", "", "")
+		if got != ResolveAcceptedBaseline {
+			t.Fatalf("got %q, want %q", got, ResolveAcceptedBaseline)
 		}
 	})
 
@@ -108,7 +116,7 @@ func TestClassifyForResolve(t *testing.T) {
 	// now sitting behind the same slot.
 	t.Run("verified sidecar for a re-pointed vault handle reads as unverified", func(t *testing.T) {
 		rec := &attest.Record{Status: attest.StatusVerified, CheckedAt: now, VaultHandle: "age://old-handle.age"}
-		got := ClassifyForResolve(rec, nil, maxAge, now, "age://new-handle.age")
+		got := ClassifyForResolve(rec, nil, maxAge, now, "age://new-handle.age", "", "", "")
 		if got != ResolveUnverified {
 			t.Fatalf("got %q, want %q (handle mismatch must not read as verified)", got, ResolveUnverified)
 		}
@@ -116,9 +124,33 @@ func TestClassifyForResolve(t *testing.T) {
 
 	t.Run("verified sidecar for the same current vault handle still verifies", func(t *testing.T) {
 		rec := &attest.Record{Status: attest.StatusVerified, CheckedAt: now, VaultHandle: "age://same-handle.age"}
-		got := ClassifyForResolve(rec, nil, maxAge, now, "age://same-handle.age")
+		got := ClassifyForResolve(rec, nil, maxAge, now, "age://same-handle.age", "", "", "")
 		if got != ResolveVerified {
 			t.Fatalf("got %q, want %q", got, ResolveVerified)
+		}
+	})
+
+	t.Run("verified sidecar for another identity reads as unverified", func(t *testing.T) {
+		rec := &attest.Record{Status: attest.StatusVerified, CheckedAt: now, ExpectedIdentity: "a@example.com"}
+		got := ClassifyForResolve(rec, nil, maxAge, now, "", "b@example.com", "", "")
+		if got != ResolveUnverified {
+			t.Fatalf("got %q, want %q (identity mismatch must not read as verified)", got, ResolveUnverified)
+		}
+	})
+
+	t.Run("verified sidecar for another platform reads as unverified", func(t *testing.T) {
+		rec := &attest.Record{Status: attest.StatusVerified, CheckedAt: now, Platform: "github"}
+		got := ClassifyForResolve(rec, nil, maxAge, now, "", "", "stripe", "")
+		if got != ResolveUnverified {
+			t.Fatalf("got %q, want %q (platform mismatch must not read as verified)", got, ResolveUnverified)
+		}
+	})
+
+	t.Run("verified sidecar for another access level reads as unverified", func(t *testing.T) {
+		rec := &attest.Record{Status: attest.StatusVerified, CheckedAt: now, AccessLevel: "read-only"}
+		got := ClassifyForResolve(rec, nil, maxAge, now, "", "", "", "read-write")
+		if got != ResolveUnverified {
+			t.Fatalf("got %q, want %q (access mismatch must not read as verified)", got, ResolveUnverified)
 		}
 	})
 }
@@ -129,6 +161,7 @@ func TestResolveStatusForAttest(t *testing.T) {
 		want string
 	}{
 		{attest.StatusVerified, ResolveVerified},
+		{attest.StatusAcceptedBaseline, ResolveAcceptedBaseline},
 		{attest.StatusUnconfirmed, ResolveUnconfirmed},
 		{attest.StatusMismatch, ResolveMismatch},
 		{attest.StatusUnreadable, ResolveUnverified},
@@ -150,6 +183,7 @@ func TestShouldRefuse(t *testing.T) {
 		{"required", ResolveUnverified, true},
 		{"required", ResolveStale, true},
 		{"required", ResolveUnconfirmed, true},
+		{"required", ResolveAcceptedBaseline, false},
 		{"required", ResolveVerified, false},
 		{"advisory", ResolveMismatch, false},
 		{"advisory", ResolveUnconfirmed, false},

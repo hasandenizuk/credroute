@@ -313,7 +313,7 @@ Adapters treat any non-zero as "do not proceed with a credentialed action". The 
 Two sanctioned paths from handle to secret:
 
 1. **`credroute exec`** (preferred): `credroute exec --platform google --task gsc -- gws gmail search ...` resolves, verifies, decrypts, injects the secret into the child's environment (name per scope profile, e.g. `GOOGLE_OAUTH_TOKEN_JSON`) or materializes the OAuth slot, runs the command, and scrubs. The secret never appears in argv, never on stdout, never in the audit log.
-2. **`credroute handle get <vault_handle> --to-fd 3`** (plumbing, for adapters that must place a secret themselves): writes the secret to an explicitly given file descriptor, or `--to-file` with `0600` perms in a caller-owned path. Writing a secret to stdout requires `--reveal-unsafe` AND a TTY AND an interactive `yes`. This path is designed to be unusable by an agent by accident.
+2. **`credroute handle get <vault_handle> --to-fd 3`** (plumbing, for adapters that must place a secret themselves): refuses unless the handle maps to exactly one configured credential, then runs the same verification gate and fresh observation as `exec`. A handle claimed by multiple identities is ambiguous and refuses. A handle not modeled in config refuses unless the operator passes `--allow-unmodeled-handle`, which is a break-glass bypass recorded in the audit log. Writing a secret to stdout requires `--force-reveal` AND a TTY AND an interactive `yes`. This path is designed to be unusable by an agent by accident.
 
 ---
 
@@ -325,15 +325,15 @@ The founding bug (dossier W): routing picked the correct slot, but the slot sile
 
 ### 5.2 The rule: record reality on every path
 
-Every operation that observes or changes what is in a slot (login, probe, resolve-with-verify, exec) writes the *observed* result to the attestation sidecar before doing anything else with it. All three outcomes are recorded: `verified`, `mismatch`, `unreadable`. There is no code path that observes a slot and does not record. A stale label therefore cannot survive its first contradiction, and probe failure is never treated as success (closes the fail-open audit finding).
+Every operation that observes or changes what is in a slot (login, probe, handle get, exec) writes the *observed* result to the attestation sidecar before doing anything else with it. Outcomes are recorded as `verified`, `accepted_baseline`, `unconfirmed`, `mismatch`, or `unreadable`. Under `verify: required`, a fresh observation that cannot be recorded is itself a refusal. A stale label therefore cannot survive its first contradiction, and probe failure is never treated as success.
 
 ### 5.3 Attestation methods per credential type
 
 | Credential type | Method | Mechanism |
 |---|---|---|
 | OAuth | **Live probe** | Scope profile defines an identity endpoint (Google: `openidconnect.googleapis.com/v1/userinfo`, field `email`; GitHub OAuth: `/user`, field `login`). Probe with the slot's live token; compare to expected identity. |
-| API key | **Fingerprint** (+ optional probe) | `fp = hex(sha256("credroute-fp-v1" || secret))[0:32]`. Sidecar stores the fingerprint of the *vault* secret at attest time; verification recomputes and compares, detecting a swapped or edited key without any network call. If the profile defines a whoami endpoint (e.g. Stripe `/v1/account`), an optional live probe adds identity confirmation. |
-| Bearer token | **Introspection or fingerprint** | If the profile defines RFC 7662 introspection or a whoami endpoint, probe; otherwise fingerprint-only, and verification status caps at `fingerprint-only` (reported honestly in the resolve JSON). |
+| API key | **Fingerprint** (+ optional probe) | `fp = hex(sha256("credroute-fp-v1" || secret))[0:32]`. Sidecar stores the fingerprint of the *vault* secret at attest time; verification recomputes and compares, detecting a swapped or edited key without any network call. If the profile defines a whoami endpoint (e.g. Stripe `/v1/account`), an optional live probe adds identity confirmation. Without a live prober, the first run records `unconfirmed` and exits non-zero under `verify: required`; the operator must run `credroute verify --platform <platform> --accept-baseline` to accept that exact secret deliberately. |
+| Bearer token | **Introspection or fingerprint** | If the profile defines RFC 7662 introspection or a whoami endpoint, probe; otherwise fingerprint-only. Plain fingerprint-only observations are `unconfirmed`; explicit operator acceptance records `accepted_baseline`. |
 | PAT | **Live probe** | Platform whoami (GitHub PAT: `GET /user` -> `login`; also captures `X-OAuth-Scopes` to cross-check the access-level claim). |
 
 Generalization of the prototype: the **login guard (L1)** becomes `credroute verify --after-login <slot>` (probe, record, refuse on mismatch); the **use guard (L3)** is the `verification` stage inside every `resolve`/`exec` (assert recorded == expected, fail closed in client context). Both are now the same code path with the same sidecar, instead of two shell hooks.
@@ -348,6 +348,8 @@ One file per slot (or per slotless credential, keyed by handle), stored under `~
   "slot": "/home/h/.config/gws/profiles/acme-gsc",
   "vault_handle": "age://google/reports-acme-corp-com/gsc-ro.json.age",
   "expected_identity": "reports@acme-corp.com",
+  "platform": "google",
+  "access_level": "read-only",
   "observed_identity": "reports@acme-corp.com",
   "status": "verified",
   "method": "oauth_probe",
@@ -360,6 +362,7 @@ One file per slot (or per slotless credential, keyed by handle), stored under `~
 ```
 
 - **Integrity**: `hmac` is HMAC-SHA256 over the canonical JSON (minus the hmac field) keyed by a machine-local key at `~/.local/state/credroute/machine.key` (0600, never synced). A hand-edited or foreign-machine sidecar fails HMAC and is treated as `unreadable`, forcing a live probe. This closes the dossier gap "sidecar has no integrity check" and defines the trust model for synced or out-of-wrapper logins: a sidecar minted elsewhere is *evidence to re-verify, never proof*.
+- **Binding**: a sidecar only satisfies the credential that matches its vault handle, expected identity, platform, and access level. A record written for identity A, platform A, or access level A is treated like no usable record for identity B, platform B, or access level B.
 - **Freshness**: `defaults.sidecar_max_age` (example: 24h) bounds how long a `verified` sidecar substitutes for a live probe. `mismatch` never expires into validity; only a new verified observation clears it.
 - **Mismatch behavior**: `resolve`/`exec` exit 3 and refuse. v1 does not auto-purge the slot (dossier B2 stays deferred); the error message names the exact remediation (`credroute verify --fix-hint` prints the re-login command from the scope profile).
 
@@ -416,7 +419,7 @@ For scope-capable platforms, the profile is the single source of the level-to-sc
 
 ### 6.3 Generic passthrough
 
-Unknown platform: resolution works normally (identity, handle, access level as configured), but the JSON reports `"enforcement": "advisory"` and verification is fingerprint-only. Nothing breaks; nothing over-claims. `credroute doctor` lists platforms running advisory so the user knows where a community profile would help.
+Unknown platform: resolution works normally (identity, handle, access level as configured), but the JSON reports `"enforcement": "advisory"` and verification is fingerprint-only. Under `verify: required`, the operator must explicitly accept the first fingerprint with `credroute verify --platform <platform> --accept-baseline`; later fingerprint changes are mismatches. `credroute doctor` lists platforms running advisory so the user knows where a community profile would help.
 
 ---
 
