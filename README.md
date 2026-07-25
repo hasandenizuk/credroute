@@ -224,20 +224,15 @@ Some of those patterns will match something legitimate: a project published unde
 
 It is a guardrail, not a cage. A secret split across two lines is invisible to it, and anyone can pass `--no-verify`. It raises the floor.
 
+
+## Author
+
+Built by [Hasan Deniz](https://hasandeniz.com). Part of the [micro-tools](https://github.com/hasandenizuk) collection - small, focused utilities for web development and SEO.
+
+- Website: [hasandeniz.com](https://hasandeniz.com)
+- GitHub: [github.com/hasandenizuk](https://github.com/hasandenizuk)
+- LinkedIn: [linkedin.com/in/hasandeniz](https://www.linkedin.com/in/hasandeniz/)
+
 ## License
 
 [MIT](LICENSE). Copyright (c) 2026 Hasan Deniz.
-
----
-
-## Who am I, what do I do?
-
-Prepared by [Hasan Deniz](https://hasandeniz.com)
-
-SEO / GEO / AI consultant, London. 20+ years in search.
-
-Technical SEO, site and CMS migrations, content architecture, schema and entities, GEO, AEO and agentic experience. Original testing on how AI systems read, quote and act on the web.
-
-Connect with me → [LinkedIn](https://www.linkedin.com/in/hasandeniz/)
-
-24 July 2026
