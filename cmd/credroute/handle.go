@@ -44,7 +44,7 @@ func cmdHandleGet(args []string) int {
 	defer func() {
 		entry.Exit = exitCode
 		entry.Decision = decisionFor(exitCode)
-		_ = audit.Append(entry)
+		_ = appendAuditOrWarn(entry)
 	}()
 
 	cfg, err := loadAndValidate(g.configPath)
@@ -78,6 +78,13 @@ func cmdHandleGet(args []string) int {
 		if !*allowUnmodeled {
 			fmt.Fprintf(os.Stderr, "credroute handle get: refused: vault handle %q is not modeled in config; pass --allow-unmodeled-handle for break-glass retrieval\n", handleStr)
 			exitCode = 3
+			return exitCode
+		}
+		entry.Exit = 0
+		entry.Decision = "allow"
+		if err := audit.Append(entry); err != nil {
+			fmt.Fprintf(os.Stderr, "credroute handle get: refused: break-glass audit entry could not be written: %v\n", err)
+			exitCode = 5
 			return exitCode
 		}
 	default:
@@ -136,6 +143,12 @@ func cmdHandleGet(args []string) int {
 			fmt.Fprintf(os.Stderr, "credroute handle get: refused after re-attestation: verification status %q under verify=%s\n", freshStatus, mode)
 			exitCode = 3
 			return exitCode
+		}
+	}
+
+	if !g.quiet {
+		if stateDir := stateDirForOutput(); stateDir != "" {
+			fmt.Fprintf(os.Stderr, "credroute: state_dir=%s\n", stateDir)
 		}
 	}
 

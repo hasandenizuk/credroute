@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hasandenizuk/credroute/internal/audit"
 	"github.com/hasandenizuk/credroute/internal/config"
 )
 
@@ -55,6 +56,11 @@ func loadAndValidate(path string) (*config.Config, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
 		return nil, err
+	}
+	if conflictPath, err := config.NewerSyncConflictSibling(cfg.Path); err != nil {
+		return nil, err
+	} else if conflictPath != "" {
+		return nil, fmt.Errorf("newer sync-conflict sibling found next to config: %s", conflictPath)
 	}
 	result := config.Validate(cfg)
 	if !result.OK() {
@@ -104,6 +110,25 @@ func decisionFor(exitCode int) string {
 // credroute itself, which would pass its own caller label if this were
 // exposed as a flag; milestone 3 keeps it fixed).
 const auditCaller = "cli"
+
+func appendAuditOrWarn(entry audit.Entry) error {
+	if err := audit.Append(entry); err != nil {
+		fmt.Fprintf(os.Stderr, "credroute: warning: audit entry was not written: %v\n", err)
+		return err
+	}
+	return nil
+}
+
+func stateDirForOutput() string {
+	if os.Getenv("CREDROUTE_STATE_DIR") == "" {
+		return ""
+	}
+	dir, err := audit.StateDir()
+	if err != nil {
+		return ""
+	}
+	return dir
+}
 
 // reorderArgsForFlagParse reorders args so every flag (and its value, if
 // it takes one) is grouped before the positional arguments, working

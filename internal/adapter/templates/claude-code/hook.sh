@@ -16,9 +16,8 @@
 set -euo pipefail
 
 if ! command -v credroute >/dev/null 2>&1; then
-  # credroute not installed/on PATH: fail open rather than block every
-  # tool call in a session where the router isn't set up yet.
-  exit 0
+  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"credroute is not on PATH; refusing because the credential hook cannot verify this tool call"}}'
+  exit 2
 fi
 
 exec credroute hook claude-code

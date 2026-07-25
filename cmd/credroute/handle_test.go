@@ -89,6 +89,40 @@ vault:
 	}
 }
 
+func TestCmdHandleGet_BreakGlassFailsWhenAuditCannotBeWritten(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state-file")
+	if err := os.WriteFile(stateFile, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write state file: %v", err)
+	}
+	t.Setenv("CREDROUTE_STATE_DIR", stateFile)
+
+	cfgPath := writeTestConfig(t, `
+version: 1
+defaults: { verify: required, on_no_match: refuse }
+identities: {}
+rules: []
+vault:
+  backend: age
+  age:
+    store_dir: /tmp/store
+    identity_file: /tmp/id.txt
+`)
+
+	out := filepath.Join(t.TempDir(), "secret.txt")
+	code, stderr := captureStderr(t, func() int {
+		return cmdHandleGet([]string{"--config", cfgPath, "age://misc/token.age", "--allow-unmodeled-handle", "--to-file", out})
+	})
+	if code == 0 {
+		t.Fatalf("cmdHandleGet exit code = 0, want refusal when break-glass audit cannot be written; stderr=%s", stderr)
+	}
+	if !strings.Contains(stderr, "break-glass audit entry could not be written") {
+		t.Fatalf("stderr = %q, want audit failure detail", stderr)
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Fatal("secret output file was created even though break-glass audit failed")
+	}
+}
+
 func TestCmdHandleGet_AmbiguousHandleRefuses(t *testing.T) {
 	t.Setenv("CREDROUTE_NO_NETWORK", "1")
 	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())

@@ -139,6 +139,46 @@ vault:
 	}
 }
 
+func TestCmdExec_LeavesChildConfigFlagWithChild(t *testing.T) {
+	t.Setenv("CREDROUTE_NO_NETWORK", "1")
+	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
+
+	v := newTestVault(t)
+	v.Encrypt(t, "github/alex/pat.age", []byte("ghp_the_real_token"))
+
+	slot := filepath.Join(t.TempDir(), "gh-slot")
+	cfgPath := writeTestConfig(t, fmt.Sprintf(`
+version: 1
+defaults:
+  on_no_match: refuse
+  verify: required
+identities:
+  alex@example.com:
+    label: "Alex"
+    platforms:
+      github:
+        credentials:
+          read-write:
+            type: pat
+            vault: age://github/alex/pat.age
+            slot: %s
+rules:
+  - id: r1
+    match: { platform: github }
+    use: { identity: alex@example.com, access: read-write, verify: advisory }
+vault:
+  backend: age
+  age:
+    store_dir: %s
+    identity_file: %s
+`, slot, v.StoreDir, v.IdentityFile))
+
+	code := cmdExec([]string{"--config", cfgPath, "--platform", "github", "sh", "-c", `test "$1" = "--config" && test "$2" = "child.yaml"`, "sh", "--config", "child.yaml"})
+	if code != 0 {
+		t.Fatalf("cmdExec exit code = %d, want 0; child --config should not be parsed by credroute", code)
+	}
+}
+
 func TestCmdExec_MismatchWithUnrecordableObservationRefuses(t *testing.T) {
 	t.Setenv("CREDROUTE_NO_NETWORK", "1")
 	stateDir := t.TempDir()

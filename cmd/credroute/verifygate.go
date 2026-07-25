@@ -19,6 +19,7 @@ import (
 	"github.com/hasandenizuk/credroute/internal/attest"
 	"github.com/hasandenizuk/credroute/internal/config"
 	"github.com/hasandenizuk/credroute/internal/rules"
+	"github.com/hasandenizuk/credroute/internal/scope"
 	"github.com/hasandenizuk/credroute/internal/verify"
 )
 
@@ -34,6 +35,35 @@ type verifyPrecheck struct {
 
 // Refuse reports whether this precheck alone is grounds to fail closed.
 func (p verifyPrecheck) Refuse() bool { return verify.ShouldRefuse(p.Mode, p.Status) }
+
+func scopeExcessDetail(platform, access, task string, observed []string) string {
+	if len(observed) == 0 {
+		return ""
+	}
+	reg, err := scope.LoadDefaultRegistry()
+	if err != nil {
+		return ""
+	}
+	expected := reg.Resolve(platform, access, task)
+	if expected.Enforcement != "scope-derived" || len(expected.Scopes) == 0 {
+		return ""
+	}
+	allowed := map[string]bool{}
+	for _, s := range expected.Scopes {
+		allowed[s] = true
+	}
+	var excess []string
+	for _, s := range observed {
+		if !allowed[s] {
+			excess = append(excess, s)
+		}
+	}
+	if len(excess) == 0 {
+		return ""
+	}
+	sort.Strings(excess)
+	return fmt.Sprintf("observed credential scopes exceed %s access for platform %q: %s", access, platform, strings.Join(excess, ", "))
+}
 
 // runVerifyPrecheck computes the effective verify mode from cliFlag, the
 // rule's own verify override (pass "" when there is no rule in play, e.g.

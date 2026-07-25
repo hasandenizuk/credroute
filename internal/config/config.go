@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"gopkg.in/yaml.v3"
 )
@@ -249,6 +250,43 @@ func Load(path string) (*Config, error) {
 	}
 	return cfg, nil
 }
+
+func NewerSyncConflictSibling(path string) (string, error) {
+	expanded, err := ExpandHome(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(expanded)
+	if err != nil {
+		return "", err
+	}
+	entries, err := os.ReadDir(filepath.Dir(expanded))
+	if err != nil {
+		return "", err
+	}
+	for _, e := range entries {
+		if !isSyncConflictName(e.Name()) {
+			continue
+		}
+		conflictPath := filepath.Join(filepath.Dir(expanded), e.Name())
+		conflictInfo, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if conflictInfo.ModTime().After(info.ModTime()) {
+			return conflictPath, nil
+		}
+	}
+	return "", nil
+}
+
+var syncthingConflictNamePattern = regexp.MustCompile(`(?i)^.+\.sync-conflict-\d{8}-\d{6}-[A-Za-z0-9]+(?:\..+)?$`)
+
+func isSyncConflictName(name string) bool {
+	return syncthingConflictNamePattern.MatchString(name) || genericConflictNamePattern.MatchString(name)
+}
+
+var genericConflictNamePattern = regexp.MustCompile(`(?i)\bconflicted copy\b`)
 
 // loadOne parses exactly one config file at an already-resolved absolute
 // (or relative-to-cwd) path, without following its include: list.

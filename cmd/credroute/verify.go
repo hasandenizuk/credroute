@@ -293,5 +293,5 @@ func logVerifyAudit(resp verifyResponse, exitCode int) {
 		Decision:     decisionFor(exitCode),
 		Caller:       auditCaller,
 	}
-	_ = audit.Append(e)
+	_ = appendAuditOrWarn(e)
 }

@@ -32,7 +32,7 @@ None of them make the decision, and none of them check the identity that is actu
 
 - **Routes by context, not by host.** A small, ordered rule set maps client, folder, task, and platform to one identity and one access level. First match wins, and you can ask it to explain exactly why a rule won.
 - **Verifies before it hands over.** It probes the account actually in the slot and refuses if it does not match what the task requires. A stale login can never inherit an old "correct" label. This is the part nothing else does, and the reason the tool exists.
-- **Treats read-only as real.** The access level maps to the actual scopes handed out, so a read task cannot get a write-capable credential.
+- **Treats read-only as real where the platform reports scopes.** The access level maps to the expected scope set. Under `verify: required`, credroute refuses an observed credential that carries scopes outside that level.
 - **Fails closed.** No match inside a client context, or any identity mismatch, and it refuses rather than guessing.
 
 ## Route, do not store
@@ -193,9 +193,15 @@ $ credroute doctor
 credroute adapter install claude-code
 ```
 
-This writes a skill (`~/.claude/skills/credroute/SKILL.md`) and a PreToolUse hook (`~/.claude/hooks/credroute-resolve-hook.sh`) that call credroute automatically. `credroute adapter install codex` and `credroute adapter install agy` do the same for those harnesses. Add `--dry-run` first if you want to see the file list before anything is written, and `--dir <path>` to install somewhere other than the harness's usual location.
+This writes a skill (`~/.claude/skills/credroute/SKILL.md`) and a PreToolUse hook (`~/.claude/hooks/credroute-resolve-hook.sh`) that call credroute automatically. The hook is a best-effort convenience check, not a security boundary: renamed binaries and variable-expanded paths can avoid name-based detection. The security boundary is that secrets stay in the vault and credroute hands them over only after verifying the identity. `credroute adapter install codex` and `credroute adapter install agy` do the same for those harnesses. Add `--dry-run` first if you want to see the file list before anything is written, and `--dir <path>` to install somewhere other than the harness's usual location.
 
 From here: `credroute explain --platform github --all` traces which rule matched and why (or why each one missed), and `credroute --help` lists every command and every global flag (`--config`, `--json`, `--quiet`, `-v`).
+
+Use a literal `--` before the child command with `credroute exec`, for example `credroute exec --platform github -- gh api user`. `credroute exec --platform github --check` resolves and verifies without running a child command.
+
+`CREDROUTE_STATE_DIR` moves the local state directory. That also moves `audit.jsonl`, so `resolve`, `exec`, and `handle get` print the effective state directory when this override is set.
+
+The audit log is a diagnostic record. It is useful for seeing what credroute allowed or refused, including break-glass use. It is not tamper-proof evidence against someone who has the same OS user account.
 
 ## Documentation
 

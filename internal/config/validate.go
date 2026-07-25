@@ -64,7 +64,7 @@ var validVaultBackends = map[string]bool{
 
 // maxIDLength bounds identity and rule ids: both land verbatim in audit
 // log lines, resolve/exec responses, and terminal output (route ls,
-// error messages), so chosen generously — real ids are emails or short
+// error messages), so chosen generously. Real ids are emails or short
 // rule names, nowhere near this length.
 const maxIDLength = 256
 

@@ -24,7 +24,7 @@ import (
 //  3. Runs mutate against the in-memory tree.
 //  4. Re-decodes the WOULD-BE result and runs the exact same strict
 //     schema + semantic check `credroute config validate` runs. Saving
-//     only happens if that comes back clean — a bad edit never reaches
+//     only happens if that comes back clean, so a bad edit never reaches
 //     disk.
 //  5. Saves atomically and reports what happened.
 //
@@ -76,10 +76,7 @@ func withConfigEdit(g *globalFlags, commandName, target string, mutate func(*con
 		return 1
 	}
 
-	// M2 (Fable 5 review v2): every successful config mutation gets one
-	// audit line, best-effort like every other audit.Append call site (a
-	// failure to write it never changes this command's own exit code).
-	_ = audit.Append(audit.Entry{
+	_ = appendAuditOrWarn(audit.Entry{
 		Op:         "config",
 		Command:    commandName,
 		Target:     target,

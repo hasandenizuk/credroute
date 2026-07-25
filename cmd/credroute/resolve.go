@@ -40,6 +40,7 @@ type resolveResponse struct {
 	// over-claimed).
 	Enforcement string `json:"enforcement,omitempty"`
 	AuditID     string `json:"audit_id,omitempty"`
+	StateDir    string `json:"state_dir,omitempty"`
 	Detail      string `json:"detail,omitempty"`
 }
 
@@ -153,6 +154,7 @@ func doResolve(configPath, platform, task, dirFlag, verifyFlag, accessFlag strin
 		Version:       1,
 		Status:        "ok",
 		AuditID:       auditID,
+		StateDir:      stateDirForOutput(),
 		Request:       requestInfo{Platform: platform, Dir: queryDir, Task: task},
 		Identity:      res.Identity,
 		IdentityLabel: res.IdentityLabel,
@@ -175,7 +177,8 @@ func doResolve(configPath, platform, task, dirFlag, verifyFlag, accessFlag strin
 	// exists for this platform, advisory generic passthrough otherwise.
 	// This only needs platform+access, so it applies whether or not the
 	// identity actually has a matching credential below.
-	if scopeReg, scopeErr := scope.LoadDefaultRegistry(); scopeErr == nil {
+	scopeReg, scopeErr := scope.LoadDefaultRegistry()
+	if scopeErr == nil {
 		scopeResult := scopeReg.Resolve(platform, res.Access, task)
 		resp.Scopes = scopeResult.Scopes
 		resp.Enforcement = scopeResult.Enforcement
@@ -194,12 +197,22 @@ func doResolve(configPath, platform, task, dirFlag, verifyFlag, accessFlag strin
 
 	pre := runVerifyPrecheck(verifyFlag, res.Rule.Use.Verify, cfg.Defaults.Verify, cfg.Defaults.SidecarMaxAge, slot, res.Credential.Vault, res.Identity, platform, res.Access)
 	resp.Verification.Status = pre.Status
+	if pre.Mode == "required" && scopeErr != nil {
+		resp.Status = "config_error"
+		resp.Detail = fmt.Sprintf("could not load scope profiles under verify=required: %v", scopeErr)
+		return resp, 5
+	}
 	if rec, readErr := attest.Read(slot, res.Credential.Vault); readErr == nil && rec != nil {
 		resp.Verification.IdentityConfirmed = rec.IdentityConfirmed
 		resp.Verification.ObservedIdentity = rec.ObservedIdentity
 		resp.Verification.Method = rec.Method
 		resp.Verification.CheckedAt = rec.CheckedAt.Format(time.RFC3339)
 		resp.Verification.SidecarAgeSeconds = int64(time.Since(rec.CheckedAt).Seconds())
+		if detail := scopeExcessDetail(platform, res.Access, task, rec.ObservedScopes); detail != "" && pre.Mode == "required" {
+			resp.Status = "mismatch"
+			resp.Detail = detail
+			return resp, 3
+		}
 	}
 
 	if pre.Refuse() {
@@ -244,6 +257,9 @@ func emitResolveOutcome(g *globalFlags, resp resolveResponse, exitCode int) int 
 	if resp.Enforcement != "" {
 		fmt.Printf("enforcement     %s\n", resp.Enforcement)
 	}
+	if resp.StateDir != "" {
+		fmt.Printf("state_dir       %s\n", resp.StateDir)
+	}
 	fmt.Printf("credential_type %s\n", resp.CredentialType)
 	fmt.Printf("vault_handle    %s\n", resp.VaultHandle)
 	if resp.Slot != "" {
@@ -277,5 +293,5 @@ func logResolveAudit(resp resolveResponse, exitCode int) {
 	if resp.MatchedRule != nil {
 		e.Rule = resp.MatchedRule.ID
 	}
-	_ = audit.Append(e)
+	_ = appendAuditOrWarn(e)
 }

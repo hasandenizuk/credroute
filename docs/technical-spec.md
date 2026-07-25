@@ -312,8 +312,8 @@ Adapters treat any non-zero as "do not proceed with a credentialed action". The 
 
 Two sanctioned paths from handle to secret:
 
-1. **`credroute exec`** (preferred): `credroute exec --platform google --task gsc -- gws gmail search ...` resolves, verifies, decrypts, injects the secret into the child's environment (name per scope profile, e.g. `GOOGLE_OAUTH_TOKEN_JSON`) or materializes the OAuth slot, runs the command, and scrubs. The secret never appears in argv, never on stdout, never in the audit log.
-2. **`credroute handle get <vault_handle> --to-fd 3`** (plumbing, for adapters that must place a secret themselves): refuses unless the handle maps to exactly one configured credential, then runs the same verification gate and fresh observation as `exec`. A handle claimed by multiple identities is ambiguous and refuses. A handle not modeled in config refuses unless the operator passes `--allow-unmodeled-handle`, which is a break-glass bypass recorded in the audit log. Writing a secret to stdout requires `--force-reveal` AND a TTY AND an interactive `yes`. This path is designed to be unusable by an agent by accident.
+1. **`credroute exec`** (preferred): `credroute exec --platform google --task gsc -- gws gmail search ...` resolves, verifies, decrypts, injects the secret into the child's environment (name per scope profile, e.g. `GOOGLE_OAUTH_TOKEN_JSON`) or materializes the OAuth slot, runs the command, and scrubs. The literal `--` marks where the child command starts. `credroute exec --platform google --check` resolves and verifies without running a child command. The secret never appears in argv, never on stdout, never in the audit log.
+2. **`credroute handle get <vault_handle> --to-fd 3`** (plumbing, for adapters that must place a secret themselves): refuses unless the handle maps to exactly one configured credential, then runs the same verification gate and fresh observation as `exec`. A handle claimed by multiple identities is ambiguous and refuses. A handle not modeled in config refuses unless the operator passes `--allow-unmodeled-handle`, which is a break-glass bypass recorded in the audit log. If that audit entry cannot be written, the bypass fails. Writing a secret to stdout requires `--force-reveal` AND a TTY AND an interactive `yes`. This path is designed to be unusable by an agent by accident.
 
 ---
 
@@ -340,7 +340,7 @@ Generalization of the prototype: the **login guard (L1)** becomes `credroute ver
 
 ### 5.4 Sidecar format
 
-One file per slot (or per slotless credential, keyed by handle), stored under `~/.local/state/credroute/attest/`, mirrored next to the slot for tool visibility when the slot is a directory:
+One full file per slot (or per slotless credential, keyed by handle), stored under `~/.local/state/credroute/attest/`:
 
 ```json
 {
@@ -365,6 +365,7 @@ One file per slot (or per slotless credential, keyed by handle), stored under `~
 - **Binding**: a sidecar only satisfies the credential that matches its vault handle, expected identity, platform, and access level. A record written for identity A, platform A, or access level A is treated like no usable record for identity B, platform B, or access level B.
 - **Freshness**: `defaults.sidecar_max_age` (example: 24h) bounds how long a `verified` sidecar substitutes for a live probe. `mismatch` never expires into validity; only a new verified observation clears it.
 - **Mismatch behavior**: `resolve`/`exec` exit 3 and refuse. v1 does not auto-purge the slot (dossier B2 stays deferred); the error message names the exact remediation (`credroute verify --fix-hint` prints the re-login command from the scope profile).
+- **Slot mirror**: when the slot is a directory, credroute writes a reduced `.credroute-attest.json` beside it for tool visibility. The mirror carries status, platform, access level, method, and check time. It omits vault handles, slot paths, expected identities, observed identities, fingerprints, scopes, and HMAC.
 
 ---
 
@@ -490,7 +491,7 @@ An adapter is glue, never logic: at most (a) a way to run `credroute resolve`/`e
 ### 8.2 Claude Code adapter (skill + hook)
 
 - **Skill** (`credroute` skill): teaches the agent the protocol. Before any credentialed action, run `credroute resolve --platform <p> [--task <t>]`; act only on exit 0; run tools through `credroute exec`. Includes the announce-line format (identity + client + access level) mirroring the prototype's announce protocol.
-- **PreToolUse hook** (Bash matcher): a short shell script that detects credential-shaped commands (the prototype guard's detection list, simplified), extracts or infers the platform, and runs `credroute resolve --quiet`. Exit 2/3 -> hook deny with credroute's `detail.remediation` as the block reason; exit 0 -> allow, optionally emitting the announce line to stderr once per identity per session (marker file in `/tmp`). The hook fails **closed** inside configured client roots and open elsewhere, inverting the prototype's fail-open default exactly where it mattered most (F4/F6).
+- **PreToolUse hook** (best-effort command-name check): a short hook script pipes Claude Code's PreToolUse JSON into `credroute hook claude-code`, which scans simple shell command tokens by basename, skips URL and remote-spec tokens, infers the platform, and runs the same resolve logic as `credroute resolve`. Single-quoted strings count as literal text (`echo 'gh auth token'` is allowed) except where they sit in a command position (`eval`, `sh`/`bash`/`zsh -c`, and the command argument of `ssh`), where the quoted text is shell input and is recursed into. Exit 2/3 -> hook deny with credroute's `detail.remediation` as the block reason; exit 0 -> allow. The hook fails **closed** inside configured client roots and open elsewhere, inverting the prototype's fail-open default exactly where it mattered most (F4/F6). It is a convenience check, not a security boundary: a renamed copy of `gh`, or `X=/usr/bin/gh; $X auth token`, can defeat name-based detection. The security boundary is that the secret stays in the vault and only credroute hands it over after verifying the identity.
 - **SessionStart hook** (optional): `credroute status --dir $PWD --json` one-liner into context so the agent knows the active routes for this project.
 
 ### 8.3 Codex adapter
@@ -506,7 +507,7 @@ Same shape as Codex: a `GEMINI.md` block (agy reads it as default context) with 
 
 ### 8.5 Bypass honesty
 
-A harness can always call the raw platform binary with its own env and skip the router (dossier gap: out-of-wrapper bypass). v1 posture: shims raise the cost, sidecars mean the *next* verified path detects the drift, and the threat model (section 9.4) states plainly that credroute constrains cooperating agents and detects, rather than prevents, determined bypass. Real prevention (e.g. slot dirs unreadable except via exec) is post-v1.
+A harness can always call the raw platform binary with its own env and skip the router (dossier gap: out-of-wrapper bypass). A renamed binary or variable-expanded binary path can also skip the Claude Code hook's name-based detection. v1 posture: shims and the hook raise the cost, sidecars mean the *next* verified path detects the drift, and the threat model (section 9.4) states plainly that credroute constrains cooperating agents and detects, rather than prevents, determined bypass. Real prevention (e.g. slot dirs unreadable except via exec) is post-v1.
 
 ---
 
@@ -524,13 +525,15 @@ Secrets live in one `Secret` struct, wiped after use; bytes only, no GC-managed 
 
 ### 9.3 Audit log
 
-Append-only JSONL at `~/.local/state/credroute/audit.jsonl` (machine-local, not synced). One line per resolve/exec/verify/store operation:
+Append-only JSONL at `~/.local/state/credroute/audit.jsonl` (machine-local, not synced). `CREDROUTE_STATE_DIR` moves this file along with the rest of credroute's local state; commands print the effective state directory when that override is set. One line per resolve/exec/verify/store operation:
 
 ```json
 {"ts":"2026-07-23T14:02:11Z","id":"01J3ZK7Q9GN3","op":"resolve","dir":"/home/h/Projects/client.acme/project.audit","platform":"google","task":"gsc","rule":"acme-gsc","identity":"reports@acme-corp.com","access":"read-only","verification":"verified:sidecar","exit":0,"caller":"claude-code-hook"}
 ```
 
-No secrets, no scope contents beyond names. `credroute audit [--since 24h] [--client acme] [--failures]` queries it. Refusals (exit 2/3) are always logged: the audit trail of "what almost went wrong" is the operational payoff.
+No secrets, no scope contents beyond names. `credroute audit [--since 24h] [--client acme] [--failures]` queries it. Refusals (exit 2/3) are logged when the log is writable, and write failures are surfaced to stderr. The `handle get --allow-unmodeled-handle` bypass fails if its audit entry cannot be written.
+
+The audit log is a diagnostic record, not tamper-proof evidence against an adversary who can write as the same OS user. The current design does not include chained HMAC audit entries.
 
 ### 9.4 Threat model
 
@@ -540,7 +543,7 @@ No secrets, no scope contents beyond names. `credroute audit [--since 24h] [--cl
 2. Right route, wrong reality: a slot silently holding a different account than its label (verify-in-slot, record-reality, HMAC'd sidecars).
 3. Over-privileged action: a read-only intent executed with a write-capable credential (scope-derived credentials, scope cross-check on probe).
 4. Secret leakage through agent transcripts, shell history, argv, logs (never-print, exec-injection, audit format).
-5. Config drift across synced machines producing stale trust (per-machine sidecar HMAC, freshness windows, doctor conflict checks).
+5. Config drift across synced machines producing stale trust (per-machine sidecar HMAC, freshness windows, command conflict checks).
 
 **Explicitly does NOT defend against:**
 
@@ -551,7 +554,7 @@ No secrets, no scope contents beyond names. `credroute audit [--since 24h] [--cl
 
 ### 9.5 Config-sync safety
 
-Synced (Syncthing-safe: per-file, no daemon, no locks): `config.yaml`, rule includes, user profiles. **Never synced** (machine-local, enforced by a `.stignore` the wizard writes and `doctor` checks): `machine.key`, `age-identity.txt`, `audit.jsonl`, attest state. `doctor` detects Syncthing conflict-copies (`*.sync-conflict-*`) in the config dir, and `resolve` refuses to run on a config whose canonical file has a newer conflict sibling. Sync problems fail loud, not subtle.
+Synced (file-sync safe: per-file, no daemon, no locks): `config.yaml`, rule includes, user profiles. **Never synced** (machine-local, enforced by a `.stignore` the wizard writes and `doctor` checks): `machine.key`, `age-identity.txt`, `audit.jsonl`, attest state. `doctor` detects sync conflict copies such as Syncthing `*.sync-conflict-*` files and Dropbox or OneDrive `conflicted copy` files in the config dir, and `resolve` refuses to run on a config whose canonical file has a newer conflict sibling. Sync problems fail loud, not subtle.
 
 ---
 
@@ -561,7 +564,7 @@ Synced (Syncthing-safe: per-file, no daemon, no locks): `config.yaml`, rule incl
 |---|---|
 | `credroute init` | First-run wizard: detect existing vault dir, create config skeleton, write .stignore, generate machine key, offer to import identities interactively. |
 | `credroute resolve` | The seam (section 4). |
-| `credroute exec -- <cmd>` | Resolve + verify + inject + run (section 4.4). |
+| `credroute exec -- <cmd>` | Resolve + verify + inject + run (section 4.4). `--check` verifies without running a child command. |
 | `credroute explain [--all]` | Rule-engine dry-run trace (section 3.3). |
 | `credroute verify [--slot <s> / --platform <p>] [--after-login]` | Probe and attest now; the generalized login guard. |
 | `credroute status [--dir <d>]` | For this context: matched routes per known platform, verification freshness, one screen. |

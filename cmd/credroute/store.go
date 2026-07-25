@@ -132,7 +132,7 @@ func cmdStoreAdd(args []string) int {
 		fmt.Fprintln(os.Stderr, "credroute store add:", err)
 		return 4
 	}
-	_ = audit.Append(audit.Entry{
+	_ = appendAuditOrWarn(audit.Entry{
 		Op:         "store",
 		Command:    "store add",
 		Target:     string(handle),
@@ -155,7 +155,7 @@ func cmdStoreAdd(args []string) int {
 // argument, so it never appears in argv, process listings, or shell
 // history. Known limitation: this terminal prompt does not suppress
 // character echo (no external terminal-control dependency is in scope
-// for this milestone; see the package-installs policy) — --from-file or
+// for this milestone; see the package-installs policy), so --from-file or
 // a pipe is the recommended path for anything sensitive.
 func readSecretInput(fromFile string, fromFD int) ([]byte, error) {
 	switch {
@@ -208,7 +208,7 @@ func readPromptedSecret(r *bufio.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("read prompt: %w", err)
 	}
 	if r.Buffered() > 0 {
-		return nil, fmt.Errorf("more input follows the first line; a multiline secret would be truncated by this prompt — use --from-file or a pipe instead")
+		return nil, fmt.Errorf("more input follows the first line; a multiline secret would be truncated by this prompt; use --from-file or a pipe instead")
 	}
 	return []byte(strings.TrimRight(line, "\r\n")), nil
 }
@@ -320,7 +320,7 @@ func cmdStoreRemove(args []string) int {
 		fmt.Fprintln(os.Stderr, "credroute store remove:", err)
 		return 4
 	}
-	_ = audit.Append(audit.Entry{
+	_ = appendAuditOrWarn(audit.Entry{
 		Op:         "store",
 		Command:    "store remove",
 		Target:     string(handle),

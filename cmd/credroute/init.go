@@ -46,7 +46,7 @@ func cmdInit(args []string) int {
 	// H1 (Fable 5 review v2): a positional path argument and --config used
 	// to silently conflict (the positional silently won), and an empty
 	// path resolved via config.DefaultPath() alone, skipping
-	// $CREDROUTE_CONFIG entirely — the one command out of step with every
+	// $CREDROUTE_CONFIG entirely, the one command out of step with every
 	// other command's resolution precedence. Both are fixed here: a
 	// flag/positional conflict is now a hard error, and the empty case
 	// goes through the same config.ResolvedPath used by Load/OpenDocument

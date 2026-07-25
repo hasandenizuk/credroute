@@ -274,12 +274,35 @@ func Write(rec *Record) error {
 		return fmt.Errorf("attest: write sidecar: %w", err)
 	}
 
-	// Best-effort mirror next to the slot for tool visibility (spec 5.4)
-	// when the slot is a directory that already exists. Failure here is
-	// never fatal: the state-dir copy above is the record of truth.
+	// Best-effort mirror next to the slot for tool visibility when the
+	// slot is a directory that already exists. It deliberately omits the
+	// vault handle, slot path, and identities because the mirror may live
+	// outside credroute's state directory. The state-dir copy above is the
+	// complete record of truth.
 	if rec.Slot != "" {
 		if info, statErr := os.Stat(rec.Slot); statErr == nil && info.IsDir() {
-			_ = fsutil.WriteFileAtomic(filepath.Join(rec.Slot, ".credroute-attest.json"), b, 0o600)
+			mirror := struct {
+				Version           int       `json:"version"`
+				Status            Status    `json:"status"`
+				IdentityConfirmed bool      `json:"identity_confirmed"`
+				Platform          string    `json:"platform,omitempty"`
+				AccessLevel       string    `json:"access_level,omitempty"`
+				Method            string    `json:"method,omitempty"`
+				CheckedAt         time.Time `json:"checked_at"`
+				CheckedBy         string    `json:"checked_by,omitempty"`
+			}{
+				Version:           rec.Version,
+				Status:            rec.Status,
+				IdentityConfirmed: rec.IdentityConfirmed,
+				Platform:          rec.Platform,
+				AccessLevel:       rec.AccessLevel,
+				Method:            rec.Method,
+				CheckedAt:         rec.CheckedAt,
+				CheckedBy:         rec.CheckedBy,
+			}
+			if mb, marshalErr := json.MarshalIndent(mirror, "", "  "); marshalErr == nil {
+				_ = fsutil.WriteFileAtomic(filepath.Join(rec.Slot, ".credroute-attest.json"), mb, 0o600)
+			}
 		}
 	}
 	return nil

@@ -166,6 +166,13 @@ func TestWrite_MirrorsToSlotDirectory(t *testing.T) {
 	if _, err := os.Stat(mirrored); err != nil {
 		t.Fatalf("expected mirrored sidecar at %s: %v", mirrored, err)
 	}
+	b, err := os.ReadFile(mirrored)
+	if err != nil {
+		t.Fatalf("read mirrored sidecar: %v", err)
+	}
+	if contains(string(b), "age://google/x.age") || contains(string(b), "alex@example.com") || contains(string(b), slotDir) {
+		t.Fatalf("mirrored sidecar leaked routing metadata: %s", b)
+	}
 }
 
 func TestDefaultCheckedBy_IncludesVersionAndHost(t *testing.T) {

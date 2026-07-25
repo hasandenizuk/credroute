@@ -28,11 +28,12 @@ func cmdExec(args []string) (exitCode int) {
 	dir := fs.String("dir", "", "directory to resolve for (default: cwd)")
 	access := fs.String("access", "", "request an access level (read-only|read-write); refuses if the matched rule resolves to a different level")
 	exportGeneric := fs.Bool("export-generic", false, "also export the secret as the generic CREDROUTE_SECRET env var, even when a platform-specific var already carries it (F16: opt-in, reduces default secret spread)")
-	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
+	checkOnly := fs.Bool("check", false, "resolve and verify the credential without running a child command")
+	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	childArgs := fs.Args()
-	if len(childArgs) == 0 {
+	if len(childArgs) == 0 && !*checkOnly {
 		fmt.Fprintln(os.Stderr, "credroute exec: missing command after --")
 		return 1
 	}
@@ -60,7 +61,7 @@ func cmdExec(args []string) (exitCode int) {
 	defer func() {
 		entry.Exit = exitCode
 		entry.Decision = decisionFor(exitCode)
-		_ = audit.Append(entry)
+		_ = appendAuditOrWarn(entry)
 	}()
 
 	cfg, err := loadAndValidate(g.configPath)
@@ -106,6 +107,11 @@ func cmdExec(args []string) (exitCode int) {
 	if pre.Refuse() {
 		fmt.Fprintf(os.Stderr, "credroute exec: refused: verification status %q under verify=%s; refusing (run `credroute verify --platform %s` to re-attest)\n", pre.Status, pre.Mode, *platform)
 		return 3
+	}
+	scopeReg, scopeErr := scope.LoadDefaultRegistry()
+	if pre.Mode == "required" && scopeErr != nil {
+		fmt.Fprintf(os.Stderr, "credroute exec: could not load scope profiles under verify=required: %v\n", scopeErr)
+		return 5
 	}
 
 	backend, err := buildVaultBackend(cfg)
@@ -157,17 +163,34 @@ func cmdExec(args []string) (exitCode int) {
 		fmt.Fprintf(os.Stderr, "credroute exec: refused after re-attestation: verification status %q under verify=%s (run `credroute verify --platform %s` for detail)\n", freshStatus, pre.Mode, *platform)
 		return 3
 	}
+	if detail := scopeExcessDetail(*platform, res.Access, *task, outcome.ObservedScopes); detail != "" && pre.Mode == "required" {
+		fmt.Fprintf(os.Stderr, "credroute exec: refused after re-attestation: %s\n", detail)
+		return 3
+	}
 
 	// Scope resolution (D7/D10, spec 6.1): the platform's scope profile
 	// names the env var the secret is injected under, plus (informational
 	// only) the scope set that credential is expected to carry.
 	var scopeResult scope.Result
-	if scopeReg, scopeErr := scope.LoadDefaultRegistry(); scopeErr == nil {
+	if scopeErr == nil {
 		scopeResult = scopeReg.Resolve(*platform, res.Access, *task)
+	}
+
+	if *checkOnly {
+		if !g.quiet {
+			fmt.Fprintf(os.Stderr, "credroute: check ok: %s (%s, %s, rule=%s)\n", res.Identity, *platform, res.Access, res.Rule.ID)
+			if stateDir := stateDirForOutput(); stateDir != "" {
+				fmt.Fprintf(os.Stderr, "credroute: state_dir=%s\n", stateDir)
+			}
+		}
+		return 0
 	}
 
 	if !g.quiet {
 		fmt.Fprintf(os.Stderr, "credroute: %s (%s, %s, rule=%s) -> %s\n", res.Identity, *platform, res.Access, res.Rule.ID, childArgs[0])
+		if stateDir := stateDirForOutput(); stateDir != "" {
+			fmt.Fprintf(os.Stderr, "credroute: state_dir=%s\n", stateDir)
+		}
 	}
 
 	cmd := exec.Command(childArgs[0], childArgs[1:]...)

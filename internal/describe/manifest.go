@@ -157,6 +157,7 @@ var manifest = []Command{
 			{Name: "dir", Kind: "flag", Type: "string", Description: "directory to resolve for (default: cwd)"},
 			{Name: "access", Kind: "flag", Type: "string", Allowed: []string{"read-only", "read-write"}, Description: "request an access level; refuses if the matched rule resolves to a different level"},
 			{Name: "export-generic", Kind: "flag", Type: "bool", Description: "also export the secret as the generic CREDROUTE_SECRET env var, even when a platform-specific var already carries it"},
+			{Name: "check", Kind: "flag", Type: "bool", Description: "resolve and verify the credential without running a child command"},
 			{Name: "cmd", Kind: "positional", Type: "command", Required: true, Description: "the command to run, after a literal --, e.g. \"-- gws gmail search ...\""},
 		},
 		Examples:  []string{"credroute exec --platform github --task deploy -- gh api user"},
