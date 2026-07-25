@@ -20,8 +20,14 @@
 # Site-specific identifiers - your username, machine names, employer or client
 # names - must NOT be written into this repository, because that publishes the
 # thing they protect. Put them one regex per line in a file outside the repo and
-# point CREDROUTE_PRIVACY_PATTERNS at it. Those patterns have no baseline: any
-# match is a finding.
+# point CREDROUTE_PRIVACY_PATTERNS at it.
+#
+# Those patterns are matched against whole lines and have no baseline in this
+# repo. Some of them need an exception rather than a weaker pattern: a project
+# named after its author has the author's name in every import path, while the
+# same name in a new comment would be a leak. List the accepted lines, again as
+# regexes, in a second private file at CREDROUTE_PRIVACY_ALLOW. A line matching
+# one of those is excused; anything else matching a private pattern is a finding.
 #
 # What it does not catch. This is a guardrail, not a cage, and it is worth being
 # plain about the edges: a secret split across two lines is invisible to it,
@@ -43,6 +49,7 @@
 set -uo pipefail
 
 PRIVATE_PATTERNS_FILE="${CREDROUTE_PRIVACY_PATTERNS:-$HOME/.config/credroute/privacy-patterns.txt}"
+PRIVATE_ALLOW_FILE="${CREDROUTE_PRIVACY_ALLOW:-$HOME/.config/credroute/privacy-allow.txt}"
 BASELINE_NAME="scripts/private-data-baseline.txt"
 
 # --- leak shapes --------------------------------------------------------------
@@ -129,14 +136,38 @@ is_baselined() {
 }
 
 PRIVATE_PATTERNS=()
-load_private_patterns() {
-  [[ -r "$PRIVATE_PATTERNS_FILE" ]] || return 0
-  local line
+PRIVATE_ALLOW=()
+read_pattern_file() {
+  # $1 = file, $2 = name of the array to fill
+  local file="$1" line
+  [[ -r "$file" ]] || return 0
   while IFS= read -r line; do
     line="${line%$'\r'}"
     [[ -z "$line" || "$line" == \#* ]] && continue
-    PRIVATE_PATTERNS+=("$line")
-  done < "$PRIVATE_PATTERNS_FILE"
+    if [[ "$2" == "PRIVATE_PATTERNS" ]]; then
+      PRIVATE_PATTERNS+=("$line")
+    else
+      PRIVATE_ALLOW+=("$line")
+    fi
+  done < "$file"
+}
+
+load_private_patterns() {
+  read_pattern_file "$PRIVATE_PATTERNS_FILE" PRIVATE_PATTERNS
+  read_pattern_file "$PRIVATE_ALLOW_FILE" PRIVATE_ALLOW
+}
+
+# Site-private patterns are matched against whole lines, so that a line can be
+# excused by its context. Your own name is the case that needs this: it is a leak
+# in a new comment, and it is the project's own address in an import path.
+is_allowed_line() {
+  local line="$1" pat
+  for pat in ${PRIVATE_ALLOW[@]+"${PRIVATE_ALLOW[@]}"}; do
+    if printf '%s' "$line" | grep -qE -- "$pat"; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 FINDINGS=0
@@ -177,11 +208,14 @@ scan_text() {
     done < <(printf '%s\n' "$text" | grep -oE -- "$regex" | sort -u)
   done
 
+  local line hit
   for regex in ${PRIVATE_PATTERNS[@]+"${PRIVATE_PATTERNS[@]}"}; do
-    while IFS= read -r match; do
-      [[ -n "$match" ]] || continue
-      report "$label" "site-private-pattern" "$match"
-    done < <(printf '%s\n' "$text" | grep -oE -- "$regex" | sort -u)
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      is_allowed_line "$line" && continue
+      hit="$(printf '%s' "$line" | grep -oE -- "$regex" | head -1)"
+      report "$label" "site-private-pattern" "${hit:-$line}"
+    done < <(printf '%s\n' "$text" | grep -E -- "$regex" | sort -u)
   done
 }
 

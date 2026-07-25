@@ -206,6 +206,8 @@ It refuses any push containing a key, a token, a home directory, or a path into 
 
 Your own identifiers, such as a username or an employer's name, should never be written into this repository, not even into the scanner. Put them in a file outside it and point `CREDROUTE_PRIVACY_PATTERNS` at it. Without that file the check only recognises paths that start with a tilde or a home directory.
 
+Some of those patterns will match something legitimate: a project published under a personal account carries that account name in every import path. Rather than weakening the pattern, list the accepted lines in a second private file at `CREDROUTE_PRIVACY_ALLOW`. Keep each entry narrow, because each one is a hole.
+
 It is a guardrail, not a cage. A secret split across two lines is invisible to it, and anyone can pass `--no-verify`. It raises the floor.
 
 ## License
