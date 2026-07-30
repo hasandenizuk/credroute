@@ -48,7 +48,7 @@ The suggested P0-P6 spine from the brief is kept, with one adjustment, justified
 - Fingerprint attestation (works for all four credential types with zero network) as the universal baseline.
 - Probe framework: `oauth_userinfo` and `http_whoami` methods with a pluggable transport (hardcoded Google + GitHub endpoints for now; profile-driven in P3).
 - Verification stage inside `resolve`/`exec` (the use guard): sidecar-fresh -> accept; stale/absent/HMAC-fail -> live probe; probe mismatch -> record + exit 3; probe unreachable under `required` -> record `unreadable` + exit 3.
-- `credroute verify [--after-login]` (the login guard) and remediation hints on refusal.
+- `credroute login` (the slot-write guard) and remediation hints on refusal.
 - Freshness window (`sidecar_max_age`), the "mismatch never expires into validity" rule.
 
 **Dependencies:** P1 (probes need live tokens via the vault; fingerprints need `Fingerprint`).
@@ -62,13 +62,13 @@ The suggested P0-P6 spine from the brief is kept, with one adjustment, justified
 **Deliverables:**
 - Embedded profile format (`go:embed`), user-override loading, `profiles ls/show`.
 - Built-in profiles: Google (gsc/ga4/drive/gmail/gtm sub-scopes, userinfo probe, login helper template), GitHub (PAT scopes, whoami probe, scopes header). Stretch: Stripe, generic-bearer.
-- Scope derivation in resolve output; observed-scope cross-check in the probe path; `scope_mismatch` refusal.
+- Scope derivation in resolve output; observed scopes shown in probe output where the platform reports them.
 - Generic passthrough: unknown platforms resolve with `enforcement: advisory`, fingerprint-only verification.
 - `exec_env` moves from per-credential config into profiles.
 
 **Dependencies:** P2 (cross-check rides the probe framework). Can start profile file format in parallel with P2.
 
-**Done when:** a Google credential minted read-only resolves with exactly the `.readonly` scope set; a deliberately over-scoped token is refused with `scope_mismatch`; an unknown platform (`clickup`) resolves advisory without error; the gsc-reauth flow from the prototype is reproducible via profile + `verify --fix-hint`.
+**Done when:** a Google credential minted read-only resolves with exactly the `.readonly` scope set; an unknown platform (`clickup`) resolves advisory without error; the gsc-reauth flow from the prototype is reproducible via profile + `credroute login`.
 
 ### P4 - Rule engine hardening + introspection polish (S)
 
@@ -165,7 +165,7 @@ P4 (starts after P0, finishes any time before P6)
 
 | # | Risk | Why it is real | Mitigation |
 |---|---|---|---|
-| R1 | **Probe fragility.** Identity endpoints change, rate-limit, or are unreachable offline; `verify: required` then blocks legitimate work and users disable verification globally, killing the differentiator. | The dossier's own audit found probe-failure fail-open precisely because probes are annoying. | Sidecar freshness window makes probes rare (once per 24h per slot, not per call); fingerprint fallback keeps *some* attestation when the network is down, honestly labeled; refusals always print a one-line fix; per-rule `verify: advisory` gives a targeted relief valve so the global setting never has to move. |
+| R1 | **Probe fragility.** Identity endpoints change, rate-limit, or are unreachable offline; `verify: on` then blocks legitimate work and users disable verification globally, killing the differentiator. | The dossier's own audit found probe-failure fail-open precisely because probes are annoying. | Sidecar freshness window makes probes rare (once per 24h per slot, not per call); fingerprint fallback keeps *some* attestation when the network is down, honestly labeled; refusals always print a one-line fix; per-rule `verify: off` gives a targeted relief valve so the global setting never has to move. |
 | R2 | **Rule-engine mistrust.** One surprising first-match outcome and users stop believing the router, hand-editing around it. | D5 chose expressiveness over a flat map; ordering bugs are the cost. | `explain --all` from day one (P0, not a later polish); shadowed-rule detection in `validate`; golden-file + property tests; docs teach narrow-before-broad with the worked example. |
 | R3 | **Adapter bypass makes guarantees look hollow.** An agent calls `gws` directly and the router never sees it; a public reviewer demonstrates this on day two. | Dossier names out-of-wrapper bypass as an open gap; Codex/agy have no hook surface. | Threat model states detection-not-prevention plainly (no over-claiming to puncture); PATH shims raise the bypass cost mechanically; Claude Code hook gives one harness real interception; sidecar drift detection catches bypass after the fact; hard prevention is a named post-v1 item. |
 | R4 | **Secret leakage through a side path.** One debug print, one error message wrapping plaintext, one argv, and the never-print guarantee is publicly false. | Highest reputational stake for a credential tool; easiest class of bug to write. | Structural containment: one `Secret` type, unexported bytes, two sanctioned exit paths only; custom vet analyzer in CI from P1; transcript-grep gate in the P1 done-when; TTY + confirm gate on reveal. |

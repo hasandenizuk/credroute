@@ -284,7 +284,7 @@ type Registry struct {
 }
 
 // LiveProbesEnabled reports whether live, network-touching identity
-// probers should be registered. F2: `verify:required` runs the live probe
+// probers should be registered. F2: `verify:on` runs the live probe
 // by default whenever a platform has one, so this defaults to true.
 // Set CREDROUTE_NO_NETWORK=1 to force every platform back to the generic
 // fingerprint prober; this is the switch every test that could otherwise
@@ -292,6 +292,18 @@ type Registry struct {
 // opt-in CREDROUTE_LIVE_PROBE=1 gate.
 func LiveProbesEnabled() bool {
 	return os.Getenv("CREDROUTE_NO_NETWORK") != "1"
+}
+
+// HasIdentityNamingProber reports whether credroute knows a live prober
+// for platform that can name the account in the credential. This is
+// availability, not whether live probes are currently enabled.
+func HasIdentityNamingProber(platform string) bool {
+	switch platform {
+	case "google", "github":
+		return true
+	default:
+		return false
+	}
 }
 
 // NewRegistry builds a registry. When enableLiveProbes is false, no
@@ -320,6 +332,17 @@ func (r *Registry) Register(platform string, prober Prober) {
 		r.byPlatform = map[string]Prober{}
 	}
 	r.byPlatform[platform] = prober
+}
+
+// HasPlatformProber reports whether this registry has a live, identity-naming
+// prober registered for platform in this run. The generic fingerprint fallback
+// is deliberately not counted.
+func (r *Registry) HasPlatformProber(platform string) bool {
+	if r == nil {
+		return false
+	}
+	_, ok := r.byPlatform[platform]
+	return ok
 }
 
 // Best returns the registered prober for platform, or the generic

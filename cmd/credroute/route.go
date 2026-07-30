@@ -43,7 +43,7 @@ func cmdRouteAdd(args []string) int {
 	fs.Var(&tasks, "task", "match.task (repeatable for a list)")
 	identity := fs.String("identity", "", "use.identity (required)")
 	access := fs.String("access", "", "use.access: read-only or read-write (required)")
-	verify := fs.String("verify", "", "use.verify override: required, advisory, or off (default: inherit defaults.verify)")
+	verify := fs.String("verify", "", "use.verify override: on or off (default: inherit defaults.verify)")
 	index := fs.Int("index", -1, "0-based insert position; default -1 means append, but before a trailing catch-all rule if one exists")
 	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
 		return 1
@@ -84,7 +84,7 @@ func cmdRouteAssign(args []string) int {
 	addGlobalFlags(fs, g)
 	identity := fs.String("identity", "", "new use.identity")
 	access := fs.String("access", "", "new use.access")
-	verify := fs.String("verify", "", "new use.verify (required/advisory/off); pass --verify= (empty) to clear the override back to defaults.verify")
+	verify := fs.String("verify", "", "new use.verify (on/off); pass --verify= (empty) to clear the override back to defaults.verify")
 	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
 		return 1
 	}

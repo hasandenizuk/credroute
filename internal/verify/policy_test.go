@@ -16,15 +16,12 @@ func TestEffectiveVerifyMode_TightenOnlyNeverLoosens(t *testing.T) {
 		defaults string
 		want     string
 	}{
-		{"no override, default required", "", "", "required", "required"},
-		{"no override, default advisory", "", "", "advisory", "advisory"},
-		{"empty everything falls back to required", "", "", "", "required"},
-		{"rule overrides default", "", "advisory", "required", "advisory"},
-		{"cli tightens advisory to required", "required", "", "advisory", "required"},
-		{"cli cannot loosen required to advisory", "advisory", "", "required", "required"},
-		{"cli cannot loosen required to off", "off", "", "required", "required"},
-		{"cli tightens off to advisory", "advisory", "", "off", "advisory"},
-		{"cli equal to base is a no-op", "required", "", "required", "required"},
+		{"no override, default on", "", "", "on", "on"},
+		{"empty everything falls back to on", "", "", "", "on"},
+		{"rule overrides default", "", "off", "on", "off"},
+		{"cli tightens off to on", "on", "", "off", "on"},
+		{"cli cannot loosen on to off", "off", "", "on", "on"},
+		{"cli equal to base is a no-op", "on", "", "on", "on"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -179,15 +176,12 @@ func TestShouldRefuse(t *testing.T) {
 		status string
 		want   bool
 	}{
-		{"required", ResolveMismatch, true},
-		{"required", ResolveUnverified, true},
-		{"required", ResolveStale, true},
-		{"required", ResolveUnconfirmed, true},
-		{"required", ResolveAcceptedBaseline, false},
-		{"required", ResolveVerified, false},
-		{"advisory", ResolveMismatch, false},
-		{"advisory", ResolveUnconfirmed, false},
-		{"advisory", ResolveUnverified, false},
+		{"on", ResolveMismatch, true},
+		{"on", ResolveUnverified, true},
+		{"on", ResolveStale, true},
+		{"on", ResolveUnconfirmed, true},
+		{"on", ResolveAcceptedBaseline, false},
+		{"on", ResolveVerified, false},
 		{"off", ResolveMismatch, false},
 	}
 	for _, tc := range cases {

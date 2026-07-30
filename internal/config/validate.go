@@ -47,9 +47,8 @@ var validCredentialTypes = map[string]bool{
 }
 
 var validVerifyModes = map[string]bool{
-	"required": true,
-	"advisory": true,
-	"off":      true,
+	"on":  true,
+	"off": true,
 }
 
 var validOnNoMatch = map[string]bool{
@@ -116,10 +115,10 @@ func Validate(cfg *Config) ValidationResult {
 	}
 	verify := cfg.Defaults.Verify
 	if verify == "" {
-		verify = "required"
+		verify = "on"
 	}
 	if !validVerifyModes[verify] {
-		addErr("defaults.verify", "unknown value %q (expected: required, advisory, off)", cfg.Defaults.Verify)
+		addErr("defaults.verify", "unknown value %q (expected: on, off)", cfg.Defaults.Verify)
 	}
 	if cfg.Defaults.SidecarMaxAge != "" {
 		if _, err := time.ParseDuration(cfg.Defaults.SidecarMaxAge); err != nil {
@@ -224,7 +223,7 @@ func Validate(cfg *Config) ValidationResult {
 		}
 
 		if rule.Use.Verify != "" && !validVerifyModes[rule.Use.Verify] {
-			addErr(path+".use.verify", "unknown value %q (expected: required, advisory, off)", rule.Use.Verify)
+			addErr(path+".use.verify", "unknown value %q (expected: on, off)", rule.Use.Verify)
 		}
 
 		// Cross-check identity has a matching platform/access-level

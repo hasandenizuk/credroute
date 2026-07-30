@@ -63,6 +63,9 @@ func loadAndValidate(path string) (*config.Config, error) {
 		return nil, fmt.Errorf("newer sync-conflict sibling found next to config: %s", conflictPath)
 	}
 	result := config.Validate(cfg)
+	for _, w := range cfg.LoadWarnings {
+		fmt.Fprintf(os.Stderr, "credroute: warning: %s\n", w)
+	}
 	if !result.OK() {
 		var msgs []string
 		for _, e := range result.Errors {

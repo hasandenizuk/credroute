@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/hasandenizuk/credroute/internal/describe"
@@ -81,10 +82,22 @@ func printCommandHuman(cmd describe.Command) {
 	}
 	if len(cmd.ExitCodes) > 0 {
 		fmt.Println("  exit codes:")
+		seen := map[string]bool{}
 		for _, code := range []string{"0", "1", "2", "3", "4", "5"} {
 			if msg, ok := cmd.ExitCodes[code]; ok {
 				fmt.Printf("    %s  %s\n", code, msg)
+				seen[code] = true
 			}
+		}
+		var extra []string
+		for code := range cmd.ExitCodes {
+			if !seen[code] {
+				extra = append(extra, code)
+			}
+		}
+		sort.Strings(extra)
+		for _, code := range extra {
+			fmt.Printf("    %s  %s\n", code, cmd.ExitCodes[code])
 		}
 	}
 	for _, ex := range cmd.Examples {

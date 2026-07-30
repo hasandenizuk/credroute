@@ -67,7 +67,9 @@ type AccessLevel struct {
 // LoginInfo is the login{} block: the re-login helper command spec 5.4's
 // remediation hint points the operator at.
 type LoginInfo struct {
-	Helper string `yaml:"helper,omitempty" json:"helper,omitempty"`
+	Helper         string `yaml:"helper,omitempty" json:"helper,omitempty"`
+	SlotEnv        string `yaml:"slot_env,omitempty" json:"slot_env,omitempty"`
+	CredentialFile string `yaml:"credential_file,omitempty" json:"credential_file,omitempty"`
 }
 
 // ScopesFor returns the concrete scope set access+task implies (spec

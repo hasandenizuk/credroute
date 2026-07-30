@@ -22,4 +22,6 @@ access_levels:
       drive: ["https://www.googleapis.com/auth/drive"]
 login:
   helper: "gws auth login --scopes {scopes} --profile-dir {slot}"
+  slot_env: GOOGLE_WORKSPACE_CLI_CONFIG_DIR
+  credential_file: token.json
 exec_env: GOOGLE_OAUTH_TOKEN_JSON

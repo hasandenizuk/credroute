@@ -10,7 +10,7 @@ import (
 const routeTestConfigYAML = `version: 1
 defaults:
   on_no_match: refuse
-  verify: required
+  verify: on
   sidecar_max_age: 24h
 identities:
   alex@example.com:

@@ -7,22 +7,16 @@ import (
 	"github.com/hasandenizuk/credroute/internal/attest"
 )
 
-// verifyRank orders the three verify modes from loosest to strictest so
+// verifyRank orders the verify modes from loosest to strictest so
 // "tighten only, cannot loosen" (spec 4.1) can be computed as a max.
 func verifyRank(mode string) int {
 	switch mode {
 	case "off":
 		return 0
-	case "advisory":
-		return 1
-	case "required":
+	case "on":
 		return 2
 	default:
-		// Empty or unrecognized: treat as the middle ground rather than
-		// silently granting either extreme. Validated config never
-		// reaches here with an unrecognized non-empty value; config.Validate
-		// rejects that upstream.
-		return 1
+		return 2
 	}
 }
 
@@ -30,14 +24,14 @@ func verifyRank(mode string) int {
 // default, and the CLI --verify flag into the mode that actually governs
 // one resolve/exec call. ruleVerify wins over defaultsVerify when set;
 // cliFlag can only tighten the result further, never loosen it (spec 4.1:
-// "--verify=required|advisory|off ... tighten only, cannot loosen config").
+// "--verify=on|off ... tighten only, cannot loosen config").
 func EffectiveVerifyMode(cliFlag, ruleVerify, defaultsVerify string) string {
 	base := ruleVerify
 	if base == "" {
 		base = defaultsVerify
 	}
 	if base == "" {
-		base = "required"
+		base = "on"
 	}
 	if cliFlag == "" {
 		return base
@@ -139,19 +133,13 @@ func ResolveStatusForAttest(status attest.Status) string {
 	}
 }
 
-// ShouldRefuse reports whether resolve/exec must fail closed (spec exit
-// code 3) given the effective verify mode and a resolve-facing status from
-// ClassifyForResolve/ResolveStatusForAttest. Only "required" ever refuses;
-// "advisory" reports the status but proceeds, and "off" ignores
-// verification entirely (spec 5.4/4.3). Under "required": a stale sidecar
-// no longer substitutes for a live probe (spec: "sidecar_max_age bounds
-// how long a verified sidecar substitutes for a live probe"); an
-// unconfirmed fingerprint-only baseline never satisfies "required" either
-// (F2: only a prober-confirmed identity does) unless a rule opts down to
-// "advisory". Both refuse exactly like mismatch or unverified until a
-// fresh, identity-confirming `credroute verify` clears them.
+// ShouldRefuse reports whether resolve/exec must fail closed given the
+// effective verify mode and a resolve-facing status from
+// ClassifyForResolve/ResolveStatusForAttest. "off" ignores verification.
+// Under "on", a stale, mismatched, absent, or unconfirmed sidecar refuses
+// until `credroute verify` clears it.
 func ShouldRefuse(mode, status string) bool {
-	if mode != "required" {
+	if mode == "off" {
 		return false
 	}
 	switch status {

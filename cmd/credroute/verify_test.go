@@ -114,15 +114,15 @@ vault:
 	if code != 3 {
 		t.Fatalf("verify exit code = %d, want 3; stdout=%s", code, stdout)
 	}
-	if !strings.Contains(stdout, "accept-baseline") {
-		t.Fatalf("stdout = %q, want exact accept-baseline command", stdout)
+	if !strings.Contains(stdout, "--force") {
+		t.Fatalf("stdout = %q, want exact force command", stdout)
 	}
 
 	code, stdout = captureStdout(t, func() int {
-		return cmdVerify([]string{"--config", cfgPath, "--platform", "stripe", "--accept-baseline"})
+		return cmdVerify([]string{"--config", cfgPath, "--platform", "stripe", "--force"})
 	})
 	if code != 0 {
-		t.Fatalf("verify --accept-baseline exit code = %d, want 0; stdout=%s", code, stdout)
+		t.Fatalf("verify --force exit code = %d, want 0; stdout=%s", code, stdout)
 	}
 	rec, err := attest.Read("", "age://stripe/ops/key.age")
 	if err != nil {
@@ -138,6 +138,13 @@ vault:
 	last := entries[len(entries)-1]
 	if last.Verification != string(attest.StatusAcceptedBaseline) || last.Decision != "allow" {
 		t.Fatalf("audit verification/decision = (%q, %q), want accepted_baseline/allow", last.Verification, last.Decision)
+	}
+
+	code, _ = captureStdout(t, func() int {
+		return cmdVerify([]string{"--config", cfgPath, "--platform", "stripe", "--accept-baseline"})
+	})
+	if code != 0 {
+		t.Fatalf("deprecated verify --accept-baseline alias exit code = %d, want 0", code)
 	}
 }
 

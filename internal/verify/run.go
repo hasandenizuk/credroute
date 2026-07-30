@@ -110,7 +110,7 @@ func Run(ctx context.Context, req Request, reg *Registry) (Outcome, error) {
 	case probeErr != nil:
 		// A live probe that errors is an unreadable observation, not a
 		// pass: the credential's real state is unknown, so it must not be
-		// allowed to satisfy "required" verification.
+		// allowed to satisfy verify:on.
 		rec.Status = attest.StatusUnreadable
 		outcome.Status = attest.StatusUnreadable
 		outcome.Detail = probeErr.Error()

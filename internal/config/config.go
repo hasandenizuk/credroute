@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -34,6 +35,9 @@ type Config struct {
 	// Path is the absolute path the config was loaded from. Not part of
 	// the YAML document; set by Load for error messages and doctor checks.
 	Path string `yaml:"-"`
+	// LoadWarnings records compatibility warnings from Load, such as old
+	// verify mode values normalized in memory.
+	LoadWarnings []string `yaml:"-"`
 }
 
 // Defaults holds the defaults{} block.
@@ -42,7 +46,8 @@ type Defaults struct {
 	// "refuse" (fail closed); the field is kept as a string so a future
 	// value can be added without a schema break.
 	OnNoMatch string `yaml:"on_no_match"`
-	// Verify is one of "required", "advisory", "off".
+	// Verify is one of "on" or "off". Old "required" is treated as
+	// "on"; old "advisory" is treated as "on" with a load warning.
 	Verify string `yaml:"verify"`
 	// SidecarMaxAge is a Go duration string, e.g. "24h". Consumed by
 	// resolve/exec (internal/verify.ClassifyForResolve) to decide when a
@@ -106,8 +111,8 @@ func (m RuleMatch) IsEmpty() bool {
 type RuleUse struct {
 	Identity string `yaml:"identity"`
 	Access   string `yaml:"access"` // read-only | read-write
-	// Verify overrides defaults.verify for this rule only: "required",
-	// "advisory", or "off" (milestone 2, spec 5.2/5.4). Empty inherits
+	// Verify overrides defaults.verify for this rule only: "on" or
+	// "off". Empty inherits defaults.verify.
 	// defaults.verify. The CLI --verify flag layered on top of whichever
 	// of these applies can only tighten further, never loosen (spec 4.1).
 	Verify string `yaml:"verify,omitempty"`
@@ -241,6 +246,7 @@ func Load(path string) (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("config %s: include %q: %w", cfg.Path, inc, err)
 		}
+		cfg.LoadWarnings = append(cfg.LoadWarnings, incCfg.LoadWarnings...)
 		if len(incCfg.Include) > 0 {
 			return nil, fmt.Errorf("config %s: include %q (%s): nested include: is not supported", cfg.Path, inc, incPath)
 		}
@@ -310,7 +316,30 @@ func loadOne(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config %s: %w", expanded, err)
 	}
 	cfg.Path = expanded
+	cfg.LoadWarnings = migrateVerifyModes(&cfg, expanded)
 	return &cfg, nil
+}
+
+func migrateVerifyModes(cfg *Config, path string) []string {
+	var warnings []string
+	normalize := func(field, value string) string {
+		switch strings.TrimSpace(value) {
+		case "required":
+			return "on"
+		case "advisory":
+			warnings = append(warnings, fmt.Sprintf("%s: %s uses deprecated verify value \"advisory\"; treating it as \"on\"", path, field))
+			return "on"
+		default:
+			return value
+		}
+	}
+	cfg.Defaults.Verify = normalize("defaults.verify", cfg.Defaults.Verify)
+	for i := range cfg.Rules {
+		if cfg.Rules[i].Use.Verify != "" {
+			cfg.Rules[i].Use.Verify = normalize(fmt.Sprintf("rules[%d].use.verify", i), cfg.Rules[i].Use.Verify)
+		}
+	}
+	return warnings
 }
 
 // resolveIncludePath resolves one include: entry relative to baseDir

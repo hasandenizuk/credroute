@@ -93,6 +93,8 @@ type profileDetail struct {
 	AccessLevels    map[string]profileAccessDetail `json:"access_levels,omitempty"`
 	ExecEnv         string                         `json:"exec_env,omitempty"`
 	LoginHelper     string                         `json:"login_helper,omitempty"`
+	LoginSlotEnv    string                         `json:"login_slot_env,omitempty"`
+	CredentialFile  string                         `json:"credential_file,omitempty"`
 }
 
 type profileAccessDetail struct {
@@ -132,6 +134,8 @@ func cmdProfilesShow(args []string) int {
 		IdentityProbe:   p.IdentityProbe,
 		ExecEnv:         p.ExecEnv,
 		LoginHelper:     p.Login.Helper,
+		LoginSlotEnv:    p.Login.SlotEnv,
+		CredentialFile:  p.Login.CredentialFile,
 		AccessLevels:    map[string]profileAccessDetail{},
 	}
 	for _, level := range accessLevelNames(p) {
@@ -160,6 +164,12 @@ func cmdProfilesShow(args []string) int {
 	}
 	if detail.LoginHelper != "" {
 		fmt.Printf("login_helper     %s\n", detail.LoginHelper)
+	}
+	if detail.LoginSlotEnv != "" {
+		fmt.Printf("login_slot_env   %s\n", detail.LoginSlotEnv)
+	}
+	if detail.CredentialFile != "" {
+		fmt.Printf("credential_file  %s\n", detail.CredentialFile)
 	}
 	for _, level := range accessLevelNames(p) {
 		fmt.Printf("access_level     %s\n", level)

@@ -11,7 +11,7 @@ func baseValidConfig() *Config {
 		Version: 1,
 		Defaults: Defaults{
 			OnNoMatch:     "refuse",
-			Verify:        "required",
+			Verify:        "on",
 			SidecarMaxAge: "24h",
 		},
 		Clients: map[string]Client{

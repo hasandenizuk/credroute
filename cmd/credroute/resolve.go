@@ -81,7 +81,7 @@ func cmdResolve(args []string) int {
 	platform := fs.String("platform", "", "platform to resolve (required)")
 	task := fs.String("task", "", "task tag")
 	dir := fs.String("dir", "", "directory to resolve for (default: cwd)")
-	verifyFlag := fs.String("verify", "", "override verify mode for this call: required|advisory|off (tighten only, cannot loosen config)")
+	verifyFlag := fs.String("verify", "", "override verify mode for this call: on|off (tighten only, cannot loosen config)")
 	access := fs.String("access", "", "request an access level (read-only|read-write); refuses if the matched rule resolves to a different level")
 	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
 		return 1
@@ -90,8 +90,8 @@ func cmdResolve(args []string) int {
 		fmt.Fprintln(os.Stderr, "credroute resolve: --platform is required")
 		return 1
 	}
-	if *verifyFlag != "" && *verifyFlag != "required" && *verifyFlag != "advisory" && *verifyFlag != "off" {
-		fmt.Fprintf(os.Stderr, "credroute resolve: --verify must be required, advisory, or off (got %q)\n", *verifyFlag)
+	if *verifyFlag != "" && *verifyFlag != "on" && *verifyFlag != "off" {
+		fmt.Fprintf(os.Stderr, "credroute resolve: --verify must be on or off (got %q)\n", *verifyFlag)
 		return 1
 	}
 	if *access != "" && *access != "read-only" && *access != "read-write" {
@@ -197,9 +197,9 @@ func doResolve(configPath, platform, task, dirFlag, verifyFlag, accessFlag strin
 
 	pre := runVerifyPrecheck(verifyFlag, res.Rule.Use.Verify, cfg.Defaults.Verify, cfg.Defaults.SidecarMaxAge, slot, res.Credential.Vault, res.Identity, platform, res.Access)
 	resp.Verification.Status = pre.Status
-	if pre.Mode == "required" && scopeErr != nil {
+	if pre.Mode == "on" && scopeErr != nil {
 		resp.Status = "config_error"
-		resp.Detail = fmt.Sprintf("could not load scope profiles under verify=required: %v", scopeErr)
+		resp.Detail = fmt.Sprintf("could not load scope profiles under verify=on: %v", scopeErr)
 		return resp, 5
 	}
 	if rec, readErr := attest.Read(slot, res.Credential.Vault); readErr == nil && rec != nil {
@@ -208,11 +208,6 @@ func doResolve(configPath, platform, task, dirFlag, verifyFlag, accessFlag strin
 		resp.Verification.Method = rec.Method
 		resp.Verification.CheckedAt = rec.CheckedAt.Format(time.RFC3339)
 		resp.Verification.SidecarAgeSeconds = int64(time.Since(rec.CheckedAt).Seconds())
-		if detail := scopeExcessDetail(platform, res.Access, task, rec.ObservedScopes); detail != "" && pre.Mode == "required" {
-			resp.Status = "mismatch"
-			resp.Detail = detail
-			return resp, 3
-		}
 	}
 
 	if pre.Refuse() {

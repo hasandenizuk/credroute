@@ -30,6 +30,8 @@ func run(args []string) int {
 		return cmdExplain(rest)
 	case "exec":
 		return cmdExec(rest)
+	case "login":
+		return cmdLogin(rest)
 	case "verify":
 		return cmdVerify(rest)
 	case "config":
@@ -81,10 +83,11 @@ func printUsage() {
 
 Usage:
   credroute init [--yes] [--config <path>] [--vault-dir <path>] [--identity-file <path>] [--identity <id>]
-  credroute resolve --platform <name> [--dir <path>] [--task <tag>] [--access <level>] [--verify=required|advisory|off] [--json]
+  credroute resolve --platform <name> [--dir <path>] [--task <tag>] [--access <level>] [--verify=on|off] [--json]
   credroute explain [--all] --platform <name> [--dir <path>] [--task <tag>] [--json]
   credroute exec [--platform <name>] [--dir <path>] [--task <tag>] [--access <level>] [--export-generic] -- <cmd> [args...]
-  credroute verify [--slot <path> | --platform <name> [--dir <path>] [--task <tag>]] [--after-login] [--accept-baseline] [--json]
+  credroute login --platform <name> [--dir <path>] [--task <tag>] [--expect <identity>] [--force] [--json]
+  credroute verify [--slot <path> | --platform <name> [--dir <path>] [--task <tag>]] [--force] [--json]
   credroute config validate [path]
   credroute doctor
   credroute profiles ls [--json]
@@ -115,6 +118,6 @@ Environment: CREDROUTE_CONFIG overrides the default config path when
 identity-verification probe (used by tests; never set this for real use).
 
 Exit codes: 0 ok, 1 usage error, 2 no rule matched (fail closed),
-3 identity verification mismatch or unverifiable under verify:required,
+3 identity verification mismatch or unverifiable under verify:on,
 4 vault backend error, 5 config invalid.`)
 }

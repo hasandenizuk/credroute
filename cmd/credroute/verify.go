@@ -10,14 +10,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/hasandenizuk/credroute/internal/attest"
 	"github.com/hasandenizuk/credroute/internal/audit"
 	"github.com/hasandenizuk/credroute/internal/config"
 	"github.com/hasandenizuk/credroute/internal/rules"
-	"github.com/hasandenizuk/credroute/internal/scope"
 	"github.com/hasandenizuk/credroute/internal/vault"
 	"github.com/hasandenizuk/credroute/internal/verify"
 )
@@ -40,15 +38,9 @@ type verifyResponse struct {
 	Method            string   `json:"method,omitempty"`
 	Fingerprint       string   `json:"fingerprint,omitempty"`
 	ObservedScopes    []string `json:"observed_scopes,omitempty"`
-	// ScopeWarning (F4) flags scopes observed on the credential that are
-	// not in the access level's expected scope set (over-privilege): a
-	// warning, not a refusal - `resolve`/`exec` still enforce identity
-	// verification; this is advisory extra information surfaced here and
-	// in `doctor`.
-	ScopeWarning string `json:"scope_warning,omitempty"`
-	Slot         string `json:"slot,omitempty"`
-	VaultHandle  string `json:"vault_handle,omitempty"`
-	Detail       string `json:"detail,omitempty"`
+	Slot              string   `json:"slot,omitempty"`
+	VaultHandle       string   `json:"vault_handle,omitempty"`
+	Detail            string   `json:"detail,omitempty"`
 }
 
 func cmdVerify(args []string) int {
@@ -59,8 +51,14 @@ func cmdVerify(args []string) int {
 	platform := fs.String("platform", "", "verify the credential resolve would pick for this platform")
 	task := fs.String("task", "", "task tag, used with --platform")
 	dir := fs.String("dir", "", "directory to resolve for, used with --platform (default: cwd)")
-	afterLogin := fs.Bool("after-login", false, "this run follows a fresh login into the slot (spec 5.3 login guard)")
 	acceptBaseline := fs.Bool("accept-baseline", false, "accept this exact fingerprint-only observation as the baseline for this identity")
+	force := fs.Bool("force", false, "audited override for accepting a fingerprint-only baseline")
+	for _, arg := range args {
+		if arg == "--after-login" || strings.HasPrefix(arg, "--after-login=") {
+			fmt.Fprintln(os.Stderr, "credroute verify: --after-login was removed; use `credroute login` to guard a login before it writes")
+			return 1
+		}
+	}
 	if err := fs.Parse(reorderArgsForFlagParse(fs, args)); err != nil {
 		return 1
 	}
@@ -69,11 +67,6 @@ func cmdVerify(args []string) int {
 		fmt.Fprintln(os.Stderr, "credroute verify: one of --slot or --platform is required")
 		return 1
 	}
-	if *afterLogin && *slotFlag == "" && *platform == "" {
-		fmt.Fprintln(os.Stderr, "credroute verify: --after-login requires --slot or --platform")
-		return 1
-	}
-
 	cfg, err := loadAndValidate(g.configPath)
 	if err != nil {
 		return emitVerifyOutcome(g, verifyResponse{Version: 1, Status: "error", Detail: err.Error()}, 5)
@@ -154,7 +147,7 @@ func cmdVerify(args []string) int {
 		Slot:             slot,
 		Secret:           secret,
 		CheckedBy:        attest.DefaultCheckedBy(buildVersion),
-		AcceptBaseline:   *acceptBaseline,
+		AcceptBaseline:   *force || *acceptBaseline,
 	}
 
 	outcome, runErr := verify.Run(ctx, req, registry)
@@ -180,10 +173,8 @@ func cmdVerify(args []string) int {
 		VaultHandle:       cred.Vault,
 		Detail:            outcome.Detail,
 	}
-	// allow-claude-code: see file header.
-	resp.ScopeWarning = scopeOverPrivilegeWarning(platformName, access, *task, outcome.ObservedScopes)
 	if outcome.Status == attest.StatusUnconfirmed && outcome.Method == "fingerprint" {
-		resp.Detail = strings.TrimSpace(resp.Detail + fmt.Sprintf("; run `credroute verify --platform %s --accept-baseline` to accept this exact secret as the baseline", platformName))
+		resp.Detail = strings.TrimSpace(resp.Detail + fmt.Sprintf("; run `credroute verify --platform %s --force` to accept this exact secret as the baseline", platformName))
 	}
 
 	exitCode := 1
@@ -197,45 +188,15 @@ func cmdVerify(args []string) int {
 	case attest.StatusUnreadable:
 		exitCode = 4
 	}
-	return emitVerifyOutcome(g, resp, exitCode)
-}
-
-// scopeOverPrivilegeWarning is F4: when the prober reported observed
-// scopes, compare them against the access level's expected scope set (via
-// the same scope profile registry resolve/exec use) and describe any
-// scope present on the credential but not implied by the requested access
-// level. This is advisory only (spec 6.2 calls a genuine "scope_mismatch"
-// a refusal under verify:required for the routing decision itself, which
-// is out of scope for this surface); here it is purely a warning surfaced
-// in `verify`/`doctor` output so an operator can see over-privilege
-// without resolve/exec blocking on it.
-func scopeOverPrivilegeWarning(platform, access, task string, observedScopes []string) string {
-	if len(observedScopes) == 0 {
-		return ""
-	}
-	reg, err := scope.LoadDefaultRegistry()
-	if err != nil {
-		return ""
-	}
-	result := reg.Resolve(platform, access, task)
-	if result.Enforcement != "scope-derived" {
-		return ""
-	}
-	expected := map[string]bool{}
-	for _, s := range result.Scopes {
-		expected[s] = true
-	}
-	var extra []string
-	for _, s := range observedScopes {
-		if !expected[s] {
-			extra = append(extra, s)
+	if outcome.Status == attest.StatusAcceptedBaseline && (*force || *acceptBaseline) {
+		resp.Detail = strings.TrimSpace(resp.Detail + "; force override: unverified_login")
+		if err := appendVerifyBreakGlassAudit(resp, "force:unverified_login"); err != nil {
+			resp.Status = "error"
+			resp.Detail = fmt.Sprintf("audit entry was not written for --force override unverified_login: %v", err)
+			return emitVerifyOutcome(g, resp, 5)
 		}
 	}
-	if len(extra) == 0 {
-		return ""
-	}
-	sort.Strings(extra)
-	return fmt.Sprintf("credential carries %d scope(s) beyond what access=%s implies: %s", len(extra), access, strings.Join(extra, ", "))
+	return emitVerifyOutcome(g, resp, exitCode)
 }
 
 func emitVerifyOutcome(g *globalFlags, resp verifyResponse, exitCode int) int {
@@ -270,9 +231,6 @@ func emitVerifyOutcome(g *globalFlags, resp verifyResponse, exitCode int) int {
 		fmt.Printf("slot              %s\n", resp.Slot)
 	}
 	fmt.Printf("vault_handle      %s\n", resp.VaultHandle)
-	if resp.ScopeWarning != "" {
-		fmt.Printf("scope_warning     %s\n", resp.ScopeWarning)
-	}
 	if resp.Detail != "" {
 		fmt.Printf("detail            %s\n", resp.Detail)
 	}
@@ -294,4 +252,17 @@ func logVerifyAudit(resp verifyResponse, exitCode int) {
 		Caller:       auditCaller,
 	}
 	_ = appendAuditOrWarn(e)
+}
+
+func appendVerifyBreakGlassAudit(resp verifyResponse, command string) error {
+	return audit.Append(audit.Entry{
+		ID:           audit.NewID(),
+		Op:           "verify_break_glass",
+		Command:      command,
+		Platform:     resp.Platform,
+		Identity:     resp.ExpectedIdentity,
+		Access:       resp.AccessLevel,
+		Verification: resp.Status,
+		Caller:       auditCaller,
+	})
 }

@@ -101,7 +101,7 @@ func cmdInit(args []string) int {
 		Version: 1,
 		Defaults: config.Defaults{
 			OnNoMatch:     "refuse",
-			Verify:        "required",
+			Verify:        "on",
 			SidecarMaxAge: "24h",
 		},
 		Vault: config.VaultConfig{

@@ -109,8 +109,8 @@ func cmdExec(args []string) (exitCode int) {
 		return 3
 	}
 	scopeReg, scopeErr := scope.LoadDefaultRegistry()
-	if pre.Mode == "required" && scopeErr != nil {
-		fmt.Fprintf(os.Stderr, "credroute exec: could not load scope profiles under verify=required: %v\n", scopeErr)
+	if pre.Mode == "on" && scopeErr != nil {
+		fmt.Fprintf(os.Stderr, "credroute exec: could not load scope profiles under verify=on: %v\n", scopeErr)
 		return 5
 	}
 
@@ -155,16 +155,12 @@ func cmdExec(args []string) (exitCode int) {
 			return 3
 		}
 		fmt.Fprintf(os.Stderr, "credroute exec: warning: could not record a fresh attestation: %v\n", verifyErr)
-		if pre.Mode == "required" {
-			fmt.Fprintln(os.Stderr, "credroute exec: refused: fresh observation could not be recorded under verify=required")
+		if pre.Mode == "on" {
+			fmt.Fprintln(os.Stderr, "credroute exec: refused: fresh observation could not be recorded under verify=on")
 			return 3
 		}
 	} else if verify.ShouldRefuse(pre.Mode, freshStatus) {
 		fmt.Fprintf(os.Stderr, "credroute exec: refused after re-attestation: verification status %q under verify=%s (run `credroute verify --platform %s` for detail)\n", freshStatus, pre.Mode, *platform)
-		return 3
-	}
-	if detail := scopeExcessDetail(*platform, res.Access, *task, outcome.ObservedScopes); detail != "" && pre.Mode == "required" {
-		fmt.Fprintf(os.Stderr, "credroute exec: refused after re-attestation: %s\n", detail)
 		return 3
 	}
 

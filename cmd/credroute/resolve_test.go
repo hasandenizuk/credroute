@@ -2,14 +2,11 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/hasandenizuk/credroute/internal/attest"
 )
 
 func TestDoResolveRefusesNewerSyncConflictSibling(t *testing.T) {
@@ -75,54 +72,6 @@ vault:
 	}
 	if !strings.Contains(resp.Detail, conflictPath) {
 		t.Fatalf("detail = %q, want exact conflict path %q", resp.Detail, conflictPath)
-	}
-}
-
-func TestDoResolveRefusesObservedScopesAboveResolvedAccess(t *testing.T) {
-	t.Setenv("CREDROUTE_STATE_DIR", t.TempDir())
-	slot := filepath.Join(t.TempDir(), "gh-slot")
-	handle := "age://github/alex/pat.age"
-	if err := attest.Write(&attest.Record{
-		Slot:              slot,
-		VaultHandle:       handle,
-		ExpectedIdentity:  "alex@example.com",
-		ObservedIdentity:  "alex@example.com",
-		IdentityConfirmed: true,
-		Platform:          "github",
-		AccessLevel:       "read-only",
-		Status:            attest.StatusVerified,
-		Method:            "http_whoami",
-		ObservedScopes:    []string{"repo"},
-	}); err != nil {
-		t.Fatalf("attest.Write: %v", err)
-	}
-
-	cfgPath := writeTestConfig(t, fmt.Sprintf(`
-version: 1
-defaults: { verify: required, on_no_match: refuse }
-identities:
-  alex@example.com:
-    platforms:
-      github:
-        credentials:
-          read-only: { type: pat, vault: %s, slot: %s }
-rules:
-  - id: r1
-    match: { platform: github }
-    use: { identity: alex@example.com, access: read-only }
-vault:
-  backend: age
-  age:
-    store_dir: /tmp/store
-    identity_file: /tmp/id.txt
-`, handle, slot))
-
-	resp, code := doResolve(cfgPath, "github", "", t.TempDir(), "", "")
-	if code != 3 {
-		t.Fatalf("doResolve exit code = %d, want 3; resp=%+v", code, resp)
-	}
-	if resp.Status != "mismatch" {
-		t.Fatalf("status = %q, want mismatch", resp.Status)
 	}
 }
 

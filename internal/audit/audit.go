@@ -4,7 +4,7 @@
 // ambiguity.
 //
 // Package audit implements the append-only audit log (spec 9.3): one JSON
-// line per resolve/exec/verify operation, recording context and outcome
+// line per resolve/exec/login/verify operation, recording context and outcome
 // but never a secret. Entry deliberately has no field that can hold
 // secret bytes, so there is no code path by which this package could leak
 // one.
@@ -25,7 +25,7 @@ import (
 type Entry struct {
 	TS       time.Time `json:"ts"`
 	ID       string    `json:"id"`
-	Op       string    `json:"op"` // resolve | exec | verify | config | store
+	Op       string    `json:"op"` // resolve | exec | login | verify | config | store
 	Dir      string    `json:"dir,omitempty"`
 	Platform string    `json:"platform,omitempty"`
 	Task     string    `json:"task,omitempty"`

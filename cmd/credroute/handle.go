@@ -134,8 +134,8 @@ func cmdHandleGet(args []string) int {
 				return exitCode
 			}
 			fmt.Fprintf(os.Stderr, "credroute handle get: warning: could not record a fresh attestation: %v\n", verifyErr)
-			if mode == "required" {
-				fmt.Fprintln(os.Stderr, "credroute handle get: refused: fresh observation could not be recorded under verify=required")
+			if mode == "on" {
+				fmt.Fprintln(os.Stderr, "credroute handle get: refused: fresh observation could not be recorded under verify=on")
 				exitCode = 3
 				return exitCode
 			}

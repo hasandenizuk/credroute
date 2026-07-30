@@ -90,6 +90,44 @@ func TestLoad_ParsesMinimalConfig(t *testing.T) {
 	}
 }
 
+func TestLoad_MigratesLegacyVerifyModes(t *testing.T) {
+	path := writeTempConfig(t, `
+version: 1
+defaults:
+  on_no_match: refuse
+  verify: advisory
+identities:
+  alex@example.com:
+    platforms:
+      google:
+        credentials:
+          read-only: {type: oauth, vault: age://google/alex.age}
+rules:
+  - id: r1
+    match: {platform: google}
+    use: {identity: alex@example.com, access: read-only, verify: required}
+vault:
+  backend: age
+  age:
+    store_dir: ~/vault
+    identity_file: ~/.config/credroute/age-identity.txt
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.Defaults.Verify != "on" {
+		t.Fatalf("defaults.verify = %q, want on", cfg.Defaults.Verify)
+	}
+	if cfg.Rules[0].Use.Verify != "on" {
+		t.Fatalf("rules[0].use.verify = %q, want on", cfg.Rules[0].Use.Verify)
+	}
+	if len(cfg.LoadWarnings) != 1 {
+		t.Fatalf("LoadWarnings = %v, want one advisory warning", cfg.LoadWarnings)
+	}
+}
+
 func TestLoad_UnknownFieldIsAStrictError(t *testing.T) {
 	bad := minimalConfigYAML + "\nunknown_top_level_key: true\n"
 	path := writeTempConfig(t, bad)

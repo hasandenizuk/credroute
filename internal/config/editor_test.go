@@ -15,7 +15,7 @@ const editorTestConfig = `version: 1
 
 defaults:
   on_no_match: refuse
-  verify: required
+  verify: on
   sidecar_max_age: 24h
 
 # a hand-written comment that must survive edits
@@ -247,7 +247,7 @@ func TestDocument_AssignRule(t *testing.T) {
 	}
 	newIdentity := "alex@example.com"
 	newAccess := "read-write"
-	newVerify := "advisory"
+	newVerify := "off"
 	if err := doc.AssignRule("acme-google-ro", &newIdentity, &newAccess, &newVerify); err != nil {
 		t.Fatalf("AssignRule: %v", err)
 	}
@@ -267,8 +267,8 @@ func TestDocument_AssignRule(t *testing.T) {
 	if rule.Use.Access != "read-write" {
 		t.Errorf("access = %q, want read-write", rule.Use.Access)
 	}
-	if rule.Use.Verify != "advisory" {
-		t.Errorf("verify = %q, want advisory", rule.Use.Verify)
+	if rule.Use.Verify != "off" {
+		t.Errorf("verify = %q, want off", rule.Use.Verify)
 	}
 
 	// Clearing verify back to inherit-from-defaults.
@@ -355,7 +355,7 @@ func TestDocument_AddIdentity_FreshInitStaysBlockStyle(t *testing.T) {
 	freshInit := `version: 1
 defaults:
     on_no_match: refuse
-    verify: required
+    verify: on
     sidecar_max_age: 24h
 clients: {}
 identities: {}

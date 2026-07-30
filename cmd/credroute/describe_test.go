@@ -45,6 +45,7 @@ var commandFuncs = map[string]func([]string) int{
 	"resolve":          cmdResolve,
 	"explain":          cmdExplain,
 	"exec":             cmdExec,
+	"login":            cmdLogin,
 	"verify":           cmdVerify,
 	"config validate":  cmdConfigValidate,
 	"doctor":           cmdDoctor,
@@ -302,6 +303,19 @@ func TestCmdDescribe_LookupIsCaseSensitiveExactMatch(t *testing.T) {
 	}
 	if _, ok := describe.Lookup("route add"); !ok {
 		t.Error("Lookup(\"route add\") should match, want true")
+	}
+}
+
+func TestDescribeManifest_LoginDocumentsHelperExitPassthrough(t *testing.T) {
+	cmd, ok := describe.Lookup("login")
+	if !ok {
+		t.Fatal("manifest missing login command")
+	}
+	if got := cmd.ExitCodes["helper"]; !strings.Contains(got, "returns that same helper exit code") {
+		t.Fatalf("login helper exit documentation = %q, want pass-through note", got)
+	}
+	if got := cmd.ExitCodes["4"]; !strings.Contains(got, "snapshot") {
+		t.Fatalf("login exit 4 documentation = %q, want login-specific slot failure note", got)
 	}
 }
 

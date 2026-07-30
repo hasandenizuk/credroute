@@ -4,7 +4,7 @@
 
 **A credential router for AI coding agents.** It answers one question, correctly, every time: for *this* client, *this* project, *this* task, on *this* platform, which identity should the agent use, at what access level? Then it checks the identity is really what it claims to be before handing it over.
 
-> Status: pre-release, but installable and working today. `init`, `resolve`, `verify`, `doctor`, identity/route/store management, and the adapter installers are built and tested (see [Install](#install) below). See [the roadmap](docs/roadmap.md) for what is still ahead.
+> Status: pre-release, but installable and working today. `init`, `resolve`, `login`, `verify`, `doctor`, identity/route/store management, and the adapter installers are built and tested (see [Install](#install) below). See [the roadmap](docs/roadmap.md) for what is still ahead.
 
 ---
 
@@ -32,7 +32,7 @@ None of them make the decision, and none of them check the identity that is actu
 
 - **Routes by context, not by host.** A small, ordered rule set maps client, folder, task, and platform to one identity and one access level. First match wins, and you can ask it to explain exactly why a rule won.
 - **Verifies before it hands over.** It probes the account actually in the slot and refuses if it does not match what the task requires. A stale login can never inherit an old "correct" label. This is the part nothing else does, and the reason the tool exists.
-- **Treats read-only as real where the platform reports scopes.** The access level maps to the expected scope set. Under `verify: required`, credroute refuses an observed credential that carries scopes outside that level.
+- **Reports scope expectations where the platform has a profile.** The access level maps to the expected scope set so operators can see what should be minted.
 - **Fails closed.** No match inside a client context, or any identity mismatch, and it refuses rather than guessing.
 
 ## Route, do not store
@@ -135,13 +135,13 @@ $ credroute resolve --platform github
   "status": "mismatch",
   ...
   "verification": { "status": "unverified", "identity_confirmed": false },
-  "detail": "verification status \"unverified\" under verify=required; refusing (run `credroute verify --platform github` to re-attest)"
+  "detail": "verification status \"unverified\" under verify=on; refusing (run `credroute verify --platform github` to re-attest)"
 }
 $ echo $?
 3
 ```
 
-This refusal is the point of the tool, not a bug in the quickstart: the default `verify: required` mode means credroute will not hand over a credential until it has actually probed the account sitting in that slot and confirmed it matches. To clear it for real, run:
+This refusal is the point of the tool, not a bug in the quickstart: the default `verify: on` mode means credroute will not hand over a credential until it has actually probed the account sitting in that slot and confirmed it matches. To clear it for real, run:
 
 ```
 credroute verify --platform github
@@ -149,18 +149,18 @@ credroute verify --platform github
 
 This performs a live check against the actual platform (it needs network access and a real token) and records the result. Once it reports `"status": "verified"`, `resolve` returns `"status": "ok"`.
 
-For a platform that has no live identity prober yet, `verify` reports `"status": "unconfirmed"` and exits non-zero under the default `verify: required` mode. To use that platform anyway, the operator must deliberately accept the exact current secret as the baseline:
+For a platform that has no live identity prober yet, `verify` reports `"status": "unconfirmed"` and exits non-zero under the default `verify: on` mode. To use that platform anyway, the operator must deliberately accept the exact current secret as the baseline:
 
 ```
-credroute verify --platform stripe --accept-baseline
+credroute verify --platform stripe --force
 ```
 
 That records `"status": "accepted_baseline"`. Later changes to the secret fingerprint refuse as a mismatch.
 
-To try the rest of this walkthrough offline, without a live token, loosen just this one rule instead of the whole config:
+To try the rest of this walkthrough offline, without a live token, turn verification off for just this one rule instead of the whole config:
 
 ```
-$ credroute route assign github-default --verify advisory
+$ credroute route assign github-default --verify off
 $ credroute resolve --platform github
 {
   "status": "ok",
@@ -171,7 +171,7 @@ $ credroute resolve --platform github
 }
 ```
 
-`advisory` reports the unverified status instead of refusing on it. Set it back to `required` (`credroute route assign github-default --verify required`) once you have run a real `credroute verify`.
+`off` skips the identity check. Set it back to `on` (`credroute route assign github-default --verify on`) once you have run a real `credroute verify`.
 
 **7. Check the environment.**
 

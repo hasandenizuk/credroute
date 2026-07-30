@@ -66,9 +66,19 @@ var exitCodesRouting = map[string]string{
 	"0": "resolved (and verified, if verification is required)",
 	"1": "usage or flag error",
 	"2": "no rule matched: fail closed, there is no fallback identity",
-	"3": "identity verification mismatch, or unverifiable under verify:required",
+	"3": "identity verification mismatch, or unverifiable under verify:on",
 	"4": "vault backend error (missing handle, decrypt failure)",
 	"5": "config invalid (schema, shadowed rules as hard errors, unknown identity referenced by a rule)",
+}
+
+var exitCodesLogin = map[string]string{
+	"0":      "login completed and the guarded slot was verified or intentionally accepted",
+	"1":      "usage or flag error",
+	"2":      "no rule matched: fail closed, there is no fallback identity",
+	"3":      "post-login identity mismatch, unverifiable under verify:on, or no write to the guarded slot",
+	"4":      "vault, snapshot, restore, or login-slot filesystem error",
+	"5":      "config invalid, unsafe login profile, ambiguous slot identity, or unauditable break-glass",
+	"helper": "if the login helper exits non-zero, credroute login returns that same helper exit code",
 }
 
 var exitCodesUsageOnly = map[string]string{
@@ -128,7 +138,7 @@ var manifest = []Command{
 			{Name: "platform", Kind: "flag", Type: "string", Required: true, Description: "platform to resolve, e.g. google, github"},
 			{Name: "task", Kind: "flag", Type: "string", Description: "task tag, e.g. gsc"},
 			{Name: "dir", Kind: "flag", Type: "string", Description: "directory to resolve for (default: cwd)"},
-			{Name: "verify", Kind: "flag", Type: "string", Allowed: []string{"required", "advisory", "off"}, Description: "override verify mode for this call; tightens only, cannot loosen config"},
+			{Name: "verify", Kind: "flag", Type: "string", Allowed: []string{"on", "off"}, Description: "override verify mode for this call; tightens only, cannot loosen config"},
 			{Name: "access", Kind: "flag", Type: "string", Allowed: []string{"read-only", "read-write"}, Description: "request an access level; refuses if the matched rule resolves to a different level"},
 		},
 		Examples:  []string{"credroute resolve --platform google --task gsc"},
@@ -164,18 +174,32 @@ var manifest = []Command{
 		ExitCodes: exitCodesRouting,
 	},
 	{
+		Name:    "login",
+		Purpose: "Resolve the target identity, pin the platform login destination, snapshot the slot, run the profile login helper, then verify and roll back on unsafe outcomes.",
+		Globals: true,
+		Params: []Param{
+			{Name: "platform", Kind: "flag", Type: "string", Required: true, Description: "platform to log in to, e.g. google"},
+			{Name: "task", Kind: "flag", Type: "string", Description: "task tag used to choose scope set"},
+			{Name: "dir", Kind: "flag", Type: "string", Description: "directory to resolve for (default: cwd)"},
+			{Name: "expect", Kind: "flag", Type: "string", Description: "identity the operator expects; refuses if routing resolves a different identity"},
+			{Name: "force", Kind: "flag", Type: "bool", Description: "audited override for login refusals that require operator acceptance"},
+		},
+		Examples:  []string{"credroute login --platform google --expect alex@example.com"},
+		ExitCodes: exitCodesLogin,
+	},
+	{
 		Name:    "verify",
-		Purpose: "Probe (or re-check) the identity actually present in a credential slot right now, and record the observation to its attestation sidecar. The generalized login guard: run this after a fresh login.",
+		Purpose: "Probe (or re-check) the identity actually present in a credential slot right now, and record the observation to its attestation sidecar.",
 		Globals: true,
 		Params: []Param{
 			{Name: "slot", Kind: "flag", Type: "string", Description: "verify the credential whose configured slot matches this path"},
 			{Name: "platform", Kind: "flag", Type: "string", Description: "verify the credential resolve would pick for this platform (one of --slot or --platform is required)"},
 			{Name: "task", Kind: "flag", Type: "string", Description: "task tag, used with --platform"},
 			{Name: "dir", Kind: "flag", Type: "string", Description: "directory to resolve for, used with --platform (default: cwd)"},
-			{Name: "after-login", Kind: "flag", Type: "bool", Description: "this run follows a fresh login into the slot"},
-			{Name: "accept-baseline", Kind: "flag", Type: "bool", Description: "accept this exact fingerprint-only observation as the baseline for this identity"},
+			{Name: "accept-baseline", Kind: "flag", Type: "bool", Description: "deprecated alias for --force"},
+			{Name: "force", Kind: "flag", Type: "bool", Description: "audited override for accepting a fingerprint-only baseline"},
 		},
-		Examples:  []string{"credroute verify --platform google --after-login", "credroute verify --platform stripe --accept-baseline"},
+		Examples:  []string{"credroute verify --platform google", "credroute verify --platform stripe --force"},
 		ExitCodes: map[string]string{"0": "verified or accepted baseline", "1": "usage error", "3": "mismatch, unconfirmed, or unreadable under a required check", "4": "vault backend error"},
 	},
 	{
@@ -274,7 +298,7 @@ var manifest = []Command{
 			{Name: "task", Kind: "flag", Type: "repeated-string", Description: "match.task (repeatable for a list)"},
 			{Name: "identity", Kind: "flag", Type: "string", Required: true, Description: "use.identity"},
 			{Name: "access", Kind: "flag", Type: "string", Required: true, Allowed: []string{"read-only", "read-write"}, Description: "use.access"},
-			{Name: "verify", Kind: "flag", Type: "string", Allowed: []string{"required", "advisory", "off"}, Description: "use.verify override (default: inherit defaults.verify)"},
+			{Name: "verify", Kind: "flag", Type: "string", Allowed: []string{"on", "off"}, Description: "use.verify override (default: inherit defaults.verify)"},
 			{Name: "index", Kind: "flag", Type: "int", Default: "-1", Description: "0-based insert position; -1 means the smart default described above"},
 			{Name: "id", Kind: "positional", Type: "string", Required: true, Description: "rule id"},
 		},
@@ -288,7 +312,7 @@ var manifest = []Command{
 		Params: []Param{
 			{Name: "identity", Kind: "flag", Type: "string", Description: "new use.identity"},
 			{Name: "access", Kind: "flag", Type: "string", Allowed: []string{"read-only", "read-write"}, Description: "new use.access"},
-			{Name: "verify", Kind: "flag", Type: "string", Allowed: []string{"required", "advisory", "off", ""}, Description: "new use.verify; pass an empty value to clear the override back to defaults.verify"},
+			{Name: "verify", Kind: "flag", Type: "string", Allowed: []string{"on", "off", ""}, Description: "new use.verify; pass an empty value to clear the override back to defaults.verify"},
 			{Name: "id", Kind: "positional", Type: "string", Required: true, Description: "rule id to edit"},
 		},
 		Examples:  []string{"credroute route assign acme-gsc --access read-write"},
